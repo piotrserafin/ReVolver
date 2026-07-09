@@ -1,0 +1,57 @@
+[
+  {
+    "type": "heading",
+    "defaultValue": "ReVolver Settings"
+  },
+  {
+    "type": "section",
+    "items": [
+      {
+        "type": "heading",
+        "defaultValue": "Vehicle"
+      },
+      {
+        "type": "input",
+        "messageKey": "VIN",
+        "label": "VIN",
+        "attributes": {
+          "placeholder": "e.g. YV1XZ91BDN2345678",
+          "type": "text",
+          "maxlength": 17
+        }
+      }
+    ]
+  },
+  {
+    "type": "section",
+    "items": [
+      {
+        "type": "heading",
+        "defaultValue": "Preferences"
+      },
+      {
+        "type": "toggle",
+        "messageKey": "VIBRATE",
+        "label": "Vibrate on command result",
+        "defaultValue": true
+      }
+    ]
+  },
+  {
+    "type": "section",
+    "items": [
+      {
+        "type": "heading",
+        "defaultValue": "Volvo ID"
+      },
+      {
+        "type": "text",
+        "defaultValue": "<a href='https://piotrserafin.github.io/ReVolverAuth/' class='item-container-outline'>Log in with Volvo ID</a>"
+      }
+    ]
+  },
+  {
+    "type": "submit",
+    "defaultValue": "Save Settings"
+  }
+]

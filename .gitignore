@@ -1,0 +1,14 @@
+build/
+node_modules/
+.lock-waf_*
+screenshot*.png
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+cdk.out/
+.cdk.staging/
+
+.cache/
+compile_commands.json

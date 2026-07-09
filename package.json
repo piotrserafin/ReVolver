@@ -1,0 +1,41 @@
+{
+  "name": "ReVolver",
+  "author": "Piotr Serafin",
+  "version": "1.0.0",
+  "keywords": [
+    "pebble-app"
+  ],
+  "private": true,
+  "dependencies": {
+    "pebble-clay": "^1.0.4"
+  },
+  "pebble": {
+    "displayName": "ReVolver",
+    "uuid": "6c51f45b-480d-4c4f-bd67-99c6980179f4",
+    "sdkVersion": "3",
+    "enableMultiJS": true,
+    "targetPlatforms": [
+      "aplite",
+      "basalt",
+      "chalk",
+      "diorite",
+      "emery"
+    ],
+    "watchapp": {
+      "watchface": false
+    },
+    "messageKeys": [
+      "VIN",
+      "STATUS_MSG",
+      "COMMAND",
+      "COMMAND_RESULT",
+      "VIBRATE",
+      "CAR_STATUS",
+      "CAR_INFO",
+      "AVAILABLE_CMDS"
+    ],
+    "resources": {
+      "media": []
+    }
+  }
+}
