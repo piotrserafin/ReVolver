@@ -1,23 +1,346 @@
-# ReVolver Token Exchange — AWS CDK Deployment
+# ReVolver Token Exchange Lambda
 
-## Architecture
+## Overview
+
+AWS Lambda function that acts as a secure proxy between the Pebble app and Volvo ID's OAuth2 token endpoint. Its primary purpose is to keep the `client_secret` and `vcc-api-key` server-side — they never appear in client code, the app binary, or over Bluetooth. The Lambda is exposed via a **Function URL** (no API Gateway needed).
+
+## Why Lambda Is Required
+
+Volvo's OAuth implementation requires **both PKCE AND `client_secret`** for token exchange. This is unusual — most providers use one or the other:
+
+| Provider Style | PKCE | client_secret | Server needed? |
+|---|---|---|---|
+| Public client (e.g., mobile apps) | ✅ | ❌ | No |
+| Confidential client (e.g., backend) | ❌ | ✅ | Yes |
+| **Volvo** | ✅ | ✅ | **Yes** |
+
+If Volvo supported PKCE-only (public client flow), the static ReVolverAuth page could call the token endpoint directly — no Lambda needed. But they don't.
+
+The `client_secret` can't live in:
+- ❌ ReVolverAuth HTML (public GitHub repo, viewable source)
+- ❌ Pebble app binary (extractable from .pbw)
+- ❌ PebbleKit JS (visible in phone app storage)
+- ✅ **Lambda only** (SSM Parameter Store, never exposed)
+
+Lambda exists for one reason: **to add `client_secret` to the token exchange request**. Everything else (PKCE generation, redirects, user login) happens client-side. Same for refresh — Volvo requires `client_secret` on the refresh endpoint too.
+
+## What It Does
+
+### 1. GET — Return OAuth Config
+
+Returns public OAuth configuration to the auth frontend page. No secrets exposed.
 
 ```
-GitHub Pages (public)                AWS Lambda (private)
-┌────────────────────────┐          ┌────────────────────────────────┐
-│                        │          │                                │
-│ "Log in with Volvo ID" │          │  Reads CLIENT_SECRET from      │
-│  → Redirect to Volvo   │          │  SSM Parameter Store (KMS      │
-│  ← Receive ?code=...   │          │  encrypted, never in code)     │
-│                        │──POST──→ │                                │
-│  ← tokens             │←─────────│  Exchange code → tokens        │
-│  "Return to Pebble"   │          │                                │
-└────────────────────────┘          └────────────────────────────────┘
+ReVolverAuth page ──GET──► Lambda
+                          │
+                          ├── Read from SSM: client-id, redirect-uri, scopes, auth-endpoint
+                          │
+                   ◄──────┤  {client_id, redirect_uri, scopes, auth_endpoint}
 ```
 
-## Deploy
+**Input:** None (just a GET request)
 
-### 1. Store secrets in SSM (one time)
+**Output:**
+
+```json
+{
+  "client_id": "abc123",
+  "redirect_uri": "https://piotrserafin.github.io/ReVolverAuth/",
+  "scopes": "openid conve:lock conve:unlock ...",
+  "auth_endpoint": "https://volvoid.eu.volvocars.com/as/authorization.oauth2"
+}
+```
+
+### 2. POST — Token Exchange (authorization_code)
+
+Exchanges an OAuth authorization code + PKCE verifier for access/refresh tokens. Called by the auth frontend after user logs in with Volvo ID.
+
+```
+ReVolverAuth page ──POST──► Lambda ──POST──► Volvo token endpoint
+                           │                │
+                           │ Adds:          │
+                           │ - client_secret│
+                           │   (Basic auth) │
+                           │                │
+                    ◄──────┤  {tokens +     │◄── {access_token,
+                           │   vcc_api_key} │     refresh_token,
+                           │                │     expires_in}
+```
+
+**Input:** (application/x-www-form-urlencoded)
+
+```
+grant_type=authorization_code
+code=<auth_code_from_volvo>
+code_verifier=<pkce_verifier>
+```
+
+**Output:**
+
+```json
+{
+  "access_token": "eyJhbG...",
+  "refresh_token": "Na2ALG...",
+  "expires_in": 300,
+  "token_type": "Bearer",
+  "vcc_api_key": "abc123..."
+}
+```
+
+**What Lambda adds:**
+
+- `client_secret` via HTTP Basic auth header (from SSM)
+- `redirect_uri` in the request body (from SSM)
+- `vcc_api_key` in the response (from SSM)
+
+### 3. POST — Token Refresh (refresh_token)
+
+Refreshes an expired access token. Called by PebbleKit JS directly (no webview needed).
+
+```
+PebbleKit JS ──POST──► Lambda ──POST──► Volvo token endpoint
+                       │                │
+                       │ Adds:          │
+                       │ - client_secret│
+                       │                │
+                ◄──────┤  {new tokens + │◄── {new access_token,
+                       │   vcc_api_key} │     new refresh_token,
+                       │                │     expires_in}
+```
+
+**Input:** (application/x-www-form-urlencoded)
+
+```
+grant_type=refresh_token
+refresh_token=<current_refresh_token>
+```
+
+**Output:** Same format as token exchange above (new tokens + vcc_api_key).
+
+**Important:** Volvo rotates refresh tokens — each one is single-use. The old token is invalidated after a successful refresh.
+
+### 4. OPTIONS — CORS Preflight
+
+Responds to browser CORS preflight requests with appropriate headers.
+
+**Input:** OPTIONS request with Origin header
+
+**Output:** 200 with CORS headers
+
+## Sequence Diagram — Full OAuth Flow (including Volvo login)
+
+```
+┌────────────────┐     ┌────────────────┐     ┌──────────────────┐     ┌──────────────────┐
+│ ReVolverAuth   │     │ Lambda         │     │ Volvo ID         │     │ Volvo Token      │
+│ (browser)      │     │                │     │ (login page)     │     │ Endpoint         │
+└───────┬────────┘     └───────┬────────┘     └────────┬─────────┘     └────────┬─────────┘
+        │                      │                       │                        │
+        │ GET /                │                       │                        │
+        │─────────────────────>│                       │                        │
+        │                      │                       │                        │
+        │ {client_id,          │                       │                        │
+        │  redirect_uri,       │                       │                        │
+        │  scopes,             │                       │                        │
+        │  auth_endpoint}      │                       │                        │
+        │<─────────────────────┤                       │                        │
+        │                      │                       │                        │
+        │ Generate PKCE:       │                       │                        │
+        │  code_verifier =     │                       │                        │
+        │    random(43 chars)  │                       │                        │
+        │  code_challenge =    │                       │                        │
+        │    BASE64URL(SHA256( │                       │                        │
+        │      code_verifier)) │                       │                        │
+        │  Store verifier in   │                       │                        │
+        │    sessionStorage    │                       │                        │
+        │                      │                       │                        │
+        │ Redirect ───────────────────────────────────>│                        │
+        │ GET /as/authorization.oauth2                 │                        │
+        │   ?client_id=abc123                          │                        │
+        │   &redirect_uri=https://...ReVolverAuth/     │                        │
+        │   &response_type=code                        │                        │
+        │   &scope=openid conve:lock conve:unlock ...  │                        │
+        │   &code_challenge=<base64url>                │                        │
+        │   &code_challenge_method=S256                │                        │
+        │   &state=<random>                            │                        │
+        │                      │                       │                        │
+        │                      │              User sees Volvo ID                │
+        │                      │              login page. Enters                │
+        │                      │              email + password.                 │
+        │                      │                       │                        │
+        │ Redirect back ◄──────────────────────────────┤                        │
+        │ GET https://...ReVolverAuth/                 │                        │
+        │   ?code=AUTH_CODE_ABC                        │                        │
+        │   &state=<random>                            │                        │
+        │                      │                       │                        │
+        │ POST /               │                       │                        │
+        │ grant_type=          │                       │                        │
+        │ authorization_code   │                       │                        │
+        │ code=AUTH_CODE_ABC   │                       │                        │
+        │ code_verifier=XYZ    │                       │                        │
+        │─────────────────────>│                       │                        │
+        │                      │                       │                        │
+        │                      │ POST /as/token.oauth2 │                        │
+        │                      │ Authorization: Basic  │                        │
+        │                      │   base64(id:secret)   │                        │
+        │                      │ Body:                 │                        │
+        │                      │   grant_type=         │                        │
+        │                      │   authorization_code  │                        │
+        │                      │   code=AUTH_CODE_ABC  │                        │
+        │                      │   code_verifier=XYZ   │                        │
+        │                      │   redirect_uri=...    │                        │
+        │                      │───────────────────────────────────────────────>│
+        │                      │                       │                        │
+        │                      │                       │  Volvo validates:      │
+        │                      │                       │  - code (single-use)   │
+        │                      │                       │  - verifier vs challenge
+        │                      │                       │  - client_secret       │
+        │                      │                       │  - redirect_uri match  │
+        │                      │                       │                        │
+        │                      │                       │  200 {access_token,    │
+        │                      │                       │       refresh_token,   │
+        │                      │                       │       expires_in: 300} │
+        │                      │<───────────────────────────────────────────────┤
+        │                      │                       │                        │
+        │ 200 {access_token,   │                       │                        │
+        │      refresh_token,  │                       │                        │
+        │      expires_in,     │                       │                        │
+        │      token_type,     │                       │                        │
+        │      vcc_api_key}    │                       │                        │
+        │<─────────────────────┤                       │                        │
+        │                      │                       │                        │
+        │ pebblejs://close#    │                       │                        │
+        │ {ACCESS_TOKEN,       │                       │                        │
+        │  REFRESH_TOKEN,      │                       │                        │
+        │  EXPIRES_IN,         │                       │                        │
+        │  VCC_API_KEY}        │                       │                        │
+        │──► Pebble app closes │                       │                        │
+        │    webview           │                       │                        │
+        │                      │                       │                        │
+```
+
+### PKCE (Proof Key for Code Exchange)
+
+PKCE prevents authorization code interception — even if an attacker captures the `code` from the redirect URL, they can't exchange it for tokens without the original `code_verifier`.
+
+The PKCE pair is generated by the **ReVolverAuth page** (JavaScript running in the phone's webview), not by Lambda or the watch.
+
+```
+ReVolverAuth — the OAuth client (JavaScript running in the phone's webview) — generates:
+  verifier  = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"  (random, stays in sessionStorage)
+  challenge = BASE64URL(SHA256(verifier))
+            = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"   (hash, sent to Volvo)
+
+Step 1 — Login redirect:
+  &code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM  (only the hash travels)
+  &code_challenge_method=S256
+
+Step 2 — Token exchange (via Lambda):
+  &code_verifier=dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk  (original, from sessionStorage)
+
+Volvo checks:
+  SHA256("dBjftJ...") == "E9Melh..." → ✅ match → issue tokens
+```
+
+- **verifier** — never leaves the browser until the POST to Lambda (same origin)
+- **challenge** — only a hash, useless without the original verifier
+- **code** — single-use, can't be exchanged without both verifier AND client_secret
+
+## Sequence Diagram — Token Exchange
+
+```
+┌────────────────┐     ┌────────────────┐     ┌──────────────────┐
+│ ReVolverAuth   │     │ Lambda         │     │ Volvo Token      │
+│ (browser)      │     │                │     │ Endpoint         │
+└───────┬────────┘     └───────┬────────┘     └────────┬─────────┘
+        │                      │                       │
+        │ POST /               │                       │
+        │ grant_type=          │                       │
+        │ authorization_code   │                       │
+        │ code=ABC             │                       │
+        │ code_verifier=XYZ    │                       │
+        │─────────────────────>│                       │
+        │                      │                       │
+        │                      │ Read SSM:             │
+        │                      │ - client-id           │
+        │                      │ - client-secret       │
+        │                      │ - redirect-uri        │
+        │                      │ - vcc-api-key         │
+        │                      │                       │
+        │                      │ POST /as/token.oauth2 │
+        │                      │ Authorization: Basic  │
+        │                      │   base64(id:secret)   │
+        │                      │ Body:                 │
+        │                      │   grant_type=         │
+        │                      │   authorization_code  │
+        │                      │   code=ABC            │
+        │                      │   code_verifier=XYZ   │
+        │                      │   redirect_uri=...    │
+        │                      │──────────────────────>│
+        │                      │                       │
+        │                      │ 200 {access_token,    │
+        │                      │      refresh_token,   │
+        │                      │      expires_in}      │
+        │                      │<──────────────────────┤
+        │                      │                       │
+        │ 200 {access_token,   │                       │
+        │      refresh_token,  │                       │
+        │      expires_in,     │                       │
+        │      token_type,     │                       │
+        │      vcc_api_key}    │                       │
+        │<─────────────────────┤                       │
+        │                      │                       │
+```
+
+## Sequence Diagram — Token Refresh
+
+```
+┌────────────────┐     ┌────────────────┐     ┌──────────────────┐
+│ PebbleKit JS   │     │ Lambda         │     │ Volvo Token      │
+│ (on phone)     │     │                │     │ Endpoint         │
+└───────┬────────┘     └───────┬────────┘     └────────┬─────────┘
+        │                      │                       │
+        │ POST /               │                       │
+        │ grant_type=          │                       │
+        │ refresh_token        │                       │
+        │ refresh_token=RT1    │                       │
+        │─────────────────────>│                       │
+        │                      │                       │
+        │                      │ POST /as/token.oauth2 │
+        │                      │ Authorization: Basic  │
+        │                      │ Body:                 │
+        │                      │   grant_type=         │
+        │                      │   refresh_token       │
+        │                      │   refresh_token=RT1   │
+        │                      │──────────────────────>│
+        │                      │                       │
+        │                      │ 200 {new access_token,│
+        │                      │      RT2 (new),       │
+        │                      │      expires_in}      │
+        │                      │<──────────────────────┤
+        │                      │                       │
+        │ 200 {access_token,   │  RT1 is now invalid   │
+        │      refresh_token   │                       │
+        │      (RT2),          │                       │
+        │      expires_in,     │                       │
+        │      vcc_api_key}    │                       │
+        │<─────────────────────┤                       │
+        │                      │                       │
+```
+
+## SSM Parameters
+
+| Parameter                   | Type         | Required | Description                                |
+| --------------------------- | ------------ | -------- | ------------------------------------------ |
+| `/revolver/client-id`       | SecureString | ✅       | Volvo application client ID                |
+| `/revolver/client-secret`   | SecureString | ✅       | Volvo application client secret            |
+| `/revolver/vcc-api-key`     | SecureString | ✅       | Volvo Connected Cars API key               |
+| `/revolver/redirect-uri`    | String       | ✅       | OAuth redirect URI                         |
+| `/revolver/allowed-origins` | String       | ✅       | Comma-separated allowed CORS origins       |
+| `/revolver/scopes`          | String       | Optional | Space-separated OAuth scopes (has default) |
+| `/revolver/auth-endpoint`   | String       | Optional | Volvo auth URL (has default)               |
+| `/revolver/token-endpoint`  | String       | Optional | Volvo token URL (has default)              |
+
+### Create Parameters
 
 ```bash
 aws ssm put-parameter \
@@ -44,54 +367,54 @@ aws ssm put-parameter \
   --name /revolver/allowed-origins \
   --value "https://piotrserafin.github.io,https://piotrserafin.dev" \
   --type String
-
-aws ssm put-parameter \
-  --name /revolver/scopes \
-  --value "openid conve:vehicle_relation conve:fuel_status conve:odometer_status conve:trip_statistics conve:environment conve:engine_status conve:lock conve:unlock conve:lock_status conve:commands conve:honk_flash conve:climatization_start_stop conve:diagnostics_engine_status conve:diagnostics_workshop conve:doors_status conve:windows_status conve:tyre_status conve:warnings conve:battery_charge_level conve:engine_start_stop conve:navigation conve:command_accessibility" \
-  --type String
-
-aws ssm put-parameter \
-  --name /revolver/auth-endpoint \
-  --value "https://volvoid.eu.volvocars.com/as/authorization.oauth2" \
-  --type String
-
-aws ssm put-parameter \
-  --name /revolver/token-endpoint \
-  --value "https://volvoid.eu.volvocars.com/as/token.oauth2" \
-  --type String
 ```
 
-### 2. Deploy the stack
+## Deploy
 
 ```bash
-cd auth/infra
+cd infra
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-
 cdk deploy
 ```
 
-No secrets in the deploy command — they're already in SSM.
+## Error Handling
 
-### 3. Copy the output URL
+| Scenario               | Lambda Response                                            |
+| ---------------------- | ---------------------------------------------------------- |
+| Invalid origin         | 403 `{"error": "forbidden"}`                               |
+| Missing code           | 400 `{"error": "missing_code"}`                            |
+| Missing verifier       | 400 `{"error": "missing_code_verifier"}`                   |
+| Missing refresh_token  | 400 `{"error": "missing_refresh_token"}`                   |
+| Unsupported grant_type | 400 `{"error": "unsupported_grant_type"}`                  |
+| Volvo returns error    | Volvo's status code + sanitized error (no raw body leaked) |
+| Volvo unreachable      | 502 `{"error": "network_error"}`                           |
 
-```
-Outputs:
-ReVolverAuthStack.TokenExchangeUrl = https://xxxxxxx.lambda-url.eu-west-1.on.aws/
-```
+## Security
 
-### 4. Update `index.html`
+| Concern                | Solution                                                                   |
+| ---------------------- | -------------------------------------------------------------------------- |
+| client_secret exposure | Never in code/response — only used in Basic auth header to Volvo           |
+| vcc_api_key exposure   | Returned to client in token response (needed for direct API calls)         |
+| Origin validation      | Checked against SSM `allowed-origins` list                                 |
+| Error leaking          | Volvo error bodies sanitized — only `error` and `error_description` passed |
+| SSM access             | IAM scoped to `/revolver/*` parameters only                                |
+| KMS decryption         | Restricted to SSM service context with parameter ARN condition             |
+| Config caching         | SSM values cached after cold start (no per-request SSM calls)              |
 
-```javascript
-var TOKEN_LAMBDA_URL = 'https://xxxxxxx.lambda-url.eu-west-1.on.aws/';
-```
+## Cost
 
-Push to GitHub Pages — done!
+**Free** for personal use:
 
-## Rotate secrets
+- Lambda: 1M free requests/month
+- Function URL: no additional cost
+- SSM Parameter Store: free for standard parameters
+- KMS: free for SSM default key (`aws/ssm`)
 
-Just update the SSM parameter — no redeploy needed:
+## Rotate Secrets
+
+Update SSM parameter — no redeploy needed:
 
 ```bash
 aws ssm put-parameter \
@@ -101,50 +424,10 @@ aws ssm put-parameter \
   --overwrite
 ```
 
-The Lambda caches config at cold start. To force reload, touch the function:
+Force Lambda cold start to pick up new values:
 
 ```bash
 aws lambda update-function-configuration \
   --function-name ReVolverAuthStack-token-exchange \
-  --description "force cold start $(date)"
-```
-
-## Security
-
-| Concern | Solution |
-|---------|----------|
-| Secret in git? | ❌ Never — stored in SSM only |
-| Secret in CloudFormation? | ❌ Never — Lambda only has `SSM_PREFIX` env var |
-| Secret in Lambda console? | ❌ Never — read from SSM at runtime |
-| Secret in transit? | ✅ SSM SDK uses HTTPS, KMS decryption |
-| Who can read? | Only the Lambda role (IAM scoped to `/revolver/*`) |
-| CORS? | Locked to your GitHub Pages origin |
-| Audit trail? | CloudTrail logs SSM access |
-
-## Cost
-
-**Free** for personal use:
-- Lambda: 1M requests/month free
-- Function URL: no cost
-- SSM Parameter Store: free for standard parameters
-- KMS: free for SSM default key (`aws/ssm`)
-
-## File structure
-
-```
-auth/
-├── index.html                      ← GitHub Pages (no secrets)
-├── server.py                       ← Local full-flow server
-├── .env.example
-└── infra/                          ← CDK project (same layout as WasteWatch)
-    ├── app.py                      ← CDK entry
-    ├── cdk.json
-    ├── requirements.txt
-    ├── test_local.py               ← Local Lambda testing
-    ├── lib/
-    │   ├── __init__.py
-    │   └── revolver_auth_stack.py  ← Stack definition
-    └── lambda/
-        ├── token_exchange.py       ← Lambda handler (reads SSM)
-        └── README.md
+  --description "reload $(date +%s)"
 ```

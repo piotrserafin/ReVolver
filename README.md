@@ -1,6 +1,6 @@
 # ReVolver
 
-> **Re**mote **Vol**vo controll**er** — also *volver* (Spanish): "to return/come back" 🔄
+> **Re**mote **Vol**vo controll**er** — also _volver_ (Spanish): "to return/come back" to your car :)
 
 Remote control your Volvo from your Pebble smartwatch.
 
@@ -20,13 +20,13 @@ Remote control your Volvo from your Pebble smartwatch.
 ```
 ┌──────────────────┐    ┌──────────────────┐
 │    ReVolver      │    │  • Flash Lights  │
-│                  │    │    Honk           │
-│ YV1LFM1V1T14... │    │    Honk + Flash   │
-│   XC60 2024     │    │    Lock           │
-│  Locked | 45L   │    │    Unlock         │
-│     Ready       │    │                   │
-│                  │    │                   │
-│ SELECT → commands│    │                   │
+│                  │    │    Honk          │
+│ YV1LFM1V1T14...  │    │    Honk + Flash  │
+│   XC60 2024      │    │    Lock          │
+│  Locked | 45L    │    │    Unlock        │
+│     Ready        │    │                  │
+│                  │    │                  │
+│ SELECT → commands│    │                  │
 └──────────────────┘    └──────────────────┘
     Main Window             ActionMenu
 ```
@@ -81,6 +81,7 @@ pebble install --emulator basalt    # Install on emulator
 ### 1. Volvo Developer Account
 
 Register at https://developer.volvocars.com and create an application to get:
+
 - Client ID
 - Client Secret
 - VCC API Key
@@ -125,13 +126,13 @@ pebble install --phone <IP>
 
 ## Documentation
 
-| Document | Content |
-|----------|---------|
-| [doc/api.md](doc/api.md) | Volvo API endpoints and response formats |
-| [doc/auth.md](doc/auth.md) | OAuth2 authorization flow with sequence diagram |
-| [doc/sequences.md](doc/sequences.md) | Full app lifecycle sequence diagrams |
-| [doc/plan.md](doc/plan.md) | Architecture options for auth hosting |
-| [doc/scopes.md](doc/scopes.md) | Volvo OAuth scopes reference |
+| Document                             | Content                                         |
+| ------------------------------------ | ----------------------------------------------- |
+| [doc/api.md](doc/api.md)             | Volvo API endpoints and response formats        |
+| [doc/auth.md](doc/auth.md)           | OAuth2 authorization flow with sequence diagram |
+| [doc/sequences.md](doc/sequences.md) | Full app lifecycle sequence diagrams            |
+| [doc/plan.md](doc/plan.md)           | Architecture options for auth hosting           |
+| [doc/scopes.md](doc/scopes.md)       | Volvo OAuth scopes reference                    |
 
 ## Security
 

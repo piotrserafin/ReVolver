@@ -5,14 +5,14 @@ Handles the OAuth2 token exchange with Volvo ID, keeping the client_secret
 server-side. Secrets are read from SSM Parameter Store (SecureString).
 
 SSM Parameters (create once):
-    /revolver/client-id        (SecureString)
-    /revolver/client-secret    (SecureString)
-    /revolver/vcc-api-key      (SecureString)
-    /revolver/redirect-uri     (String)
-    /revolver/allowed-origins  (String) - comma-separated allowed origins
-    /revolver/scopes           (String) - space-separated OAuth scopes
-    /revolver/auth-endpoint    (String) - Volvo ID authorization URL
-    /revolver/token-endpoint   (String) - Volvo ID token URL
+    /revolver/client-id        (SecureString) - Volvo app client ID
+    /revolver/client-secret    (SecureString) - Volvo app client secret
+    /revolver/vcc-api-key      (SecureString) - Volvo Connected Cars API key
+    /revolver/redirect-uri     (String)       - OAuth redirect URI
+    /revolver/allowed-origins  (String)       - Comma-separated allowed CORS origins
+    /revolver/scopes           (String)       - Space-separated OAuth scopes (optional)
+    /revolver/auth-endpoint    (String)       - Volvo authorization URL (optional)
+    /revolver/token-endpoint   (String)       - Volvo token URL (optional)
 
 Environment variables:
     SSM_PREFIX  - Parameter path prefix (default: /revolver)

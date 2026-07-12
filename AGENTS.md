@@ -4,12 +4,11 @@ alwaysApply: true
 
 ## Project Overview
 
-ReVolver — a Pebble smartwatch application that remote-controls a Volvo car via the Volvo Connected Vehicle API. Written in C using the Pebble SDK, with a PebbleKit JS layer for Bluetooth communication and OAuth2 token management.
+ReVolver — **Re**mote **Vol**vo controll**er**. A Pebble smartwatch application that remote-controls a Volvo car via the Volvo Connected Vehicle API. Written in C using the Pebble SDK, with a PebbleKit JS layer for Bluetooth communication and OAuth2 token management.
 
 ## Supported Platforms
 
-The app targets multiple Pebble watch models:
-- aplite (Pebble classic)
+- aplite (Pebble Classic)
 - basalt (Pebble Time)
 - chalk (Pebble Time Round)
 - diorite (Pebble 2)
@@ -18,24 +17,17 @@ The app targets multiple Pebble watch models:
 ## Commands
 
 ```bash
-# Build the app for all platforms
-pebble build
-
-# Clean build artifacts
-pebble clean
-
-# Install the app on specific emulator
-pebble install --emulator basalt
-
-# Screenshot the running emulator
-pebble screenshot --scale 6 --no-open screenshot.png
+pebble build                             # Build for all platforms
+pebble clean                             # Clean build artifacts
+pebble install --emulator basalt         # Install on emulator
+pebble screenshot --scale 6 --no-open screenshot.png  # Screenshot
 ```
 
 If you need more information on the `pebble` command or a sub-command, append `--help`.
 
 ### Headless Environments
 
-If you're running in an environment without a window server (e.g., headless Linux, Docker, CI), you must add `--vnc` to **all commands that interact with the emulator**. This includes app installs, screenshots, button presses, and any `emu-*` commands:
+Add `--vnc` to all emulator commands (installs, screenshots, button presses):
 
 ```bash
 pebble install --emulator basalt --vnc
@@ -43,17 +35,30 @@ pebble screenshot --vnc --scale 6 --no-open screenshot.png
 pebble emu-button --emulator basalt --vnc click select
 ```
 
-The `--vnc` flag enables a VNC-based display backend that doesn't require X11.
-
 ## Project Structure
 
 ```
-src/c/           - C source files for the watchapp
-src/pkjs/        - PebbleKitJS files (OAuth token management, Volvo API calls)
-doc/             - Documentation (scopes, architecture notes, API reference)
-infra/           - AWS CDK stack (Lambda token exchange proxy)
-  infra/lambda/  - Lambda function code
-  infra/lib/     - CDK stack definition
+src/c/
+  main.c                    - Init, event loop
+  modules/
+    messaging.h/.c          - AppMessage handlers, vibration
+    commands.h/.c           - Command table, bitmask, ActionMenu
+  windows/
+    main_window.h/.c        - Main window UI, persisted display data
+src/pkjs/
+  index.js                  - Volvo API, token management, command execution
+  config.json               - Clay settings (VIN, vibration toggle)
+doc/
+  api.md                    - Volvo API endpoint reference
+  auth.md                   - OAuth2 flow with sequence diagram
+  sequences.md              - App lifecycle sequence diagrams
+  plan.md                   - Auth hosting architecture options
+  scopes.md                 - Volvo OAuth scopes
+infra/
+  lambda/token_exchange.py  - Lambda handler (OAuth proxy)
+  lambda/README.md          - Lambda documentation
+  lib/revolver_auth_stack.py - CDK stack definition
+  app.py                    - CDK entry point
 ```
 
 ## App Flow
@@ -66,30 +71,51 @@ See `doc/sequences.md` for detailed sequence diagrams covering:
 ## App Architecture
 
 ### Main Window
-- Title: "ReVolver"
-- VIN (24pt bold)
-- Car info: model + year (18pt, cached from API)
-- Car status: lock state + fuel level (18pt bold, green on color watches)
-- Connection status (24pt bold): "Ready", "Car offline", "Open settings"
+- Title: "ReVolver" (28pt bold)
+- VIN (24pt bold) — persisted on watch
+- Car info: model + year (18pt) — persisted on watch
+- Car status: lock state + fuel level (18pt bold, green) — persisted on watch
+- Connection status (24pt bold): "Ready", "Car offline", "Connecting...", "Refreshing..."
 - Hint: "SELECT → commands"
+- **UP button** — manual refresh of car status
 
 ### ActionMenu (triggered by SELECT button)
-- Dynamic list of commands based on vehicle capabilities
-- Commands fetched from `/vehicles/{vin}/commands` and cached
-- Bitmask sent to watch to filter available items
-- Blue background on color watches
+- Dynamic list based on vehicle capabilities (bitmask from `/commands` API)
+- Confirmation sub-menu for Unlock and Engine Start
+- Engine Start: time selection (1/5/10/15 min) → Confirm
+- Blue background on color watches (GColorCobaltBlue)
 
 ### Command Flow
 ```
 SELECT → ActionMenu → pick command → status shows "Sending..."
-→ JS calls Volvo API → result shown temporarily (3s) + vibration
+→ JS calls Volvo API → friendly result (e.g., "Locked!") shown 3s + vibration
 → status reverts to "Ready"
 ```
 
-### Vibration Feedback (configurable via Clay settings)
+### Vibration Feedback (configurable via Clay)
 - Success: single short pulse (100ms)
 - Error: double pulse (100ms-100ms-100ms)
-- Result text prefixed with `+` (success) or `-` (error)
+- Result text prefixed with `+` (success) or `-` (error) in AppMessage
+
+### Persisted Watch Data
+VIN, car info, and car status are persisted on watch flash storage — displayed immediately on launch with no "Not set" flash.
+
+## JS Command Registry
+
+Single `COMMANDS` object holds all command metadata (mirrors C-side `COMMANDS[]` array):
+
+```js
+var COMMANDS = {
+  'flash':          { bit: 0x01, success: 'Flashed!' },
+  'honk':           { bit: 0x02, success: 'Honked!' },
+  'lock':           { bit: 0x08, success: 'Locked!' },
+  'unlock':         { bit: 0x10, success: 'Unlocked!' },
+  'engine-start':   { bit: 0x80, success: 'Started!',
+    body: function(p) { return JSON.stringify({runtimeMinutes: parseInt(p, 10)}); }
+  },
+  ...
+};
+```
 
 ## Message Keys
 
@@ -97,14 +123,14 @@ SELECT → ActionMenu → pick command → status shows "Sending..."
 |-----|----|-----------|------|---------|
 | `VIN` | 10000 | JS → Watch | string | Vehicle VIN |
 | `STATUS_MSG` | 10001 | JS → Watch | string | Connection status |
-| `COMMAND` | 10002 | Watch → JS | string | Command to execute (e.g., "flash") |
+| `COMMAND` | 10002 | Watch → JS | string | Command to execute (e.g., "flash", "engine-start:10", "refresh") |
 | `COMMAND_RESULT` | 10003 | JS → Watch | string | `+text` or `-text` (prefix = success/error) |
 | `VIBRATE` | 10004 | JS → Watch | int | Settings: 1=on, 0=off. Persisted on watch. |
 | `CAR_STATUS` | 10005 | JS → Watch | string | Live car state ("Locked \| 45L") |
 | `CAR_INFO` | 10006 | JS → Watch | string | Model + year ("XC60 2024"). Cached. |
 | `AVAILABLE_CMDS` | 10007 | JS → Watch | int | Bitmask of supported commands |
 
-### Command Bit Flags
+### Command Bit Flags (C defines, must match JS COMMANDS[].bit)
 
 ```c
 #define CMD_FLASH         (1 << 0)  // 0x01
@@ -120,11 +146,13 @@ SELECT → ActionMenu → pick command → status shows "Sending..."
 
 ## Auth Architecture
 
-The app uses a secure OAuth2 PKCE flow with Volvo ID.
+OAuth2 PKCE flow with Volvo ID. Lambda required because Volvo needs both PKCE AND `client_secret`.
 
-**Current:** GitHub Pages frontend (`ReVolverAuth` repo) + Lambda token exchange proxy.
+See `doc/auth.md` for full sequence diagram and `infra/lambda/README.md` for why Lambda is required.
 
-**Planned:** Lambda-only architecture — see `doc/plan.md`.
+**Current:** GitHub Pages frontend (`ReVolverAuth` repo) + Lambda proxy.
+
+**Planned:** Lambda-only — see `doc/plan.md`.
 
 ### SSM Parameters (`/revolver` prefix)
 
@@ -133,10 +161,10 @@ The app uses a secure OAuth2 PKCE flow with Volvo ID.
 | `/revolver/client-id` | SecureString | ✅ | Volvo app client ID |
 | `/revolver/client-secret` | SecureString | ✅ | Volvo app client secret |
 | `/revolver/vcc-api-key` | SecureString | ✅ | Volvo Connected Cars API key |
-| `/revolver/redirect-uri` | String | ✅ | `https://piotrserafin.github.io/ReVolverAuth/` |
-| `/revolver/allowed-origins` | String | ✅ | Comma-separated origins |
-| `/revolver/scopes` | String | Optional | Space-separated OAuth scopes |
-| `/revolver/auth-endpoint` | String | Optional | Volvo authorization URL |
+| `/revolver/redirect-uri` | String | ✅ | OAuth redirect URI |
+| `/revolver/allowed-origins` | String | ✅ | Comma-separated CORS origins |
+| `/revolver/scopes` | String | Optional | OAuth scopes |
+| `/revolver/auth-endpoint` | String | Optional | Volvo auth URL |
 | `/revolver/token-endpoint` | String | Optional | Volvo token URL |
 
 ### Token Refresh
@@ -145,49 +173,32 @@ The app uses a secure OAuth2 PKCE flow with Volvo ID.
 - Auto-refresh before each command if expired
 - Retry on 401 from Volvo (refresh + retry once)
 - Refresh lock prevents concurrent requests (Volvo refresh tokens are single-use)
-- Lambda returns `vcc_api_key` alongside tokens (fetched on every refresh)
+- Lambda returns `vcc_api_key` alongside tokens
 
 ### Key URLs
 
 - Auth frontend: `https://piotrserafin.github.io/ReVolverAuth/`
-- Volvo auth: `https://volvoid.eu.volvocars.com/as/authorization.oauth2`
-- Volvo token: `https://volvoid.eu.volvocars.com/as/token.oauth2`
 - Volvo API: `https://api.volvocars.com/connected-vehicle/v2`
 - Lambda: `https://tpl5qhrn75bxzps77pdqllhxuy0mckgw.lambda-url.eu-central-1.on.aws/`
 
-### Deploy Commands
-
-```bash
-aws ssm put-parameter --name /revolver/client-id --value "..." --type SecureString
-aws ssm put-parameter --name /revolver/client-secret --value "..." --type SecureString
-aws ssm put-parameter --name /revolver/vcc-api-key --value "..." --type SecureString
-aws ssm put-parameter --name /revolver/redirect-uri --value "https://piotrserafin.github.io/ReVolverAuth/" --type String
-aws ssm put-parameter --name /revolver/allowed-origins --value "https://piotrserafin.github.io,https://piotrserafin.dev" --type String
-
-cd infra && source .venv/bin/activate && cdk deploy
-```
-
 ## Volvo Connected Vehicle API
-
-Documentation: https://developer.volvocars.com/apis/
 
 See `doc/api.md` for full endpoint reference.
 
 ### API Calls on Launch
 
 1. `GET /vehicles/{vin}/command-accessibility` — is car online?
-2. `GET /vehicles/{vin}/commands` — available commands (cached)
+2. `GET /vehicles/{vin}/commands` — available commands (cached, sent as bitmask)
 3. `GET /vehicles/{vin}` — model, year (cached)
 4. `GET /vehicles/{vin}/doors` — lock status
 5. `GET /vehicles/{vin}/fuel` — fuel level
 
-### Cached Data (localStorage)
+### Cached Data
 
-| Key | Fetched From | Cache Policy |
-|-----|-------------|--------------|
-| `revolver_car_info` | `/vehicles/{vin}` | Fetched once, never changes |
-| `revolver_commands` | `/vehicles/{vin}/commands` | Fetched once, never changes |
-| Access/refresh tokens | Lambda | Refreshed when expired |
+| Storage | Data | Cache Policy |
+|---------|------|-------------|
+| JS localStorage | `car_info`, `commands`, tokens | Cleared on VIN change or re-login |
+| Watch persist | VIN, car info, car status | Updated on every message, instant on launch |
 
 ## Known Issues
 
@@ -196,45 +207,37 @@ See `doc/api.md` for full endpoint reference.
 - AppMessage requires queue pattern (only one message in flight at a time)
 - Sideloading clears PebbleKit JS localStorage — requires re-login during development
 - Volvo access tokens last ~5 min; refresh threshold is 60s before expiry
+- Investigating: occasional re-login needed after ~1h idle (diagnostic logs in place)
 
 ## Configuration
 
-The app is configured as a watchapp (not a watchface): `"watchface": false` in `package.json`.
+Watchapp (not watchface): `"watchface": false` in `package.json`.
 
 ## SDK Documentation
 
-The full Pebble SDK documentation is available at https://developer.repebble.com.
+Full Pebble SDK docs: https://developer.repebble.com (append `.md` for Markdown version).
 
-An index of every page is at https://developer.repebble.com/llms.txt. Use it to discover what's available. Every page also has a Markdown version: append `.md` to any documentation URL to fetch plain Markdown instead of HTML (e.g. `https://developer.repebble.com/guides/events-and-services/buttons.md`). Prefer the `.md` form when reading docs.
+Index: https://developer.repebble.com/llms.txt
 
-Key Entry Points:
-- https://developer.repebble.com/tutorials/watchface-tutorial/part1 - C development start
-- https://developer.repebble.com/guides/events-and-services/buttons - Button handling
-- https://developer.repebble.com/guides/user-interfaces/layers - UI foundations
-- https://developer.repebble.com/docs/c/User_Interface/Window/ActionMenu/index - ActionMenu API
-
-## Development Best Practices
-
-- Whenever making changes, run `pebble screenshot --scale 6` and view the screenshot to make sure it's what the user requested. If not, make more changes until it does what it's supposed to.
+Key references:
+- https://developer.repebble.com/docs/c/User_Interface/Window/ActionMenu/index — ActionMenu API
+- https://developer.repebble.com/guides/best-practices/modular-app-architecture — Modular architecture
 
 ## Emulator Button Control
 
-Control emulator buttons programmatically with `pebble emu-button`:
-
 ```bash
-pebble emu-button click select          # Normal click
-pebble emu-button click back --duration 2000  # Long press
-pebble emu-button click down --repeat 5  # Scroll
+pebble emu-button click select                    # Normal click
+pebble emu-button click back --duration 2000      # Long press
+pebble emu-button click down --repeat 5           # Scroll
 ```
 
-**Buttons:** `back`, `up`, `select`, `down`
+**Buttons:** `back`, `up` (refresh), `select` (commands), `down`
 
 ## AI Interaction Guidelines
 
 - **NEVER execute destructive or side-effecting actions without explicit user confirmation.** This includes: `cdk deploy`, `git commit`, `git push`, `aws ssm put-parameter`, `pebble install`, or any command that modifies remote state.
 - **Ask before making code changes.** If the user asks for modifications, describe the planned changes and wait for approval before editing files.
 - Only read files, run builds (`pebble build`), run `cdk synth`, and take screenshots without asking.
-- When given an image of a watchface to replicate, describe the target watchface in precise detail. Note every visual element present, as well as size, alignment, font weight, spacing, and location.
 
 ## AI Code Review Guidelines
 

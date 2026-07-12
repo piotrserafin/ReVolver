@@ -35,7 +35,14 @@
       "AVAILABLE_CMDS"
     ],
     "resources": {
-      "media": []
+      "media": [
+        {
+          "type": "bitmap",
+          "name": "APP_ICON",
+          "file": "images/icon.png",
+          "menuIcon": true
+        }
+      ]
     }
   }
 }

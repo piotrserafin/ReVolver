@@ -2,8 +2,6 @@
 
 #include "../windows/main_window.h"
 
-// ─── Body Options ────────────────────────────────────────────────────────────
-
 typedef struct {
   const char *label;
   const char *command;  // Full command string sent to JS
@@ -14,8 +12,6 @@ static const BodyOption ENGINE_START_OPTIONS[] = {{"1 min", "engine-start:1"},
                                                   {"5 min", "engine-start:5"},
                                                   {"10 min", "engine-start:10"},
                                                   {"15 min", "engine-start:15"}};
-
-// ─── Command Table ───────────────────────────────────────────────────────────
 
 #define NUM_COMMANDS 9
 
@@ -30,24 +26,22 @@ typedef struct {
 
 static const Command COMMANDS[NUM_COMMANDS] = {
     {CMD_FLASH, "Flash Lights", "flash", false, NULL, 0},
-    {CMD_HONK, "Honk", "honk", false, NULL, 0},
-    {CMD_HONK_FLASH, "Honk + Flash", "honk-flash", false, NULL, 0},
+    {CMD_HONK, "Honk", "honk", true, NULL, 0},
+    {CMD_HONK_FLASH, "Honk + Flash", "honk-flash", true, NULL, 0},
     {CMD_LOCK, "Lock", "lock", false, NULL, 0},
     {CMD_UNLOCK, "Unlock", "unlock", true, NULL, 0},
-    {CMD_CLIMATE_START, "Climate On", "climatization-start", false, NULL, 0},
+    {CMD_CLIMATE_START, "Climate On", "climatization-start", true, NULL, 0},
     {CMD_CLIMATE_STOP, "Climate Off", "climatization-stop", false, NULL, 0},
     {CMD_ENGINE_START, "Engine Start", "engine-start", false, ENGINE_START_OPTIONS,
      sizeof(ENGINE_START_OPTIONS) / sizeof(ENGINE_START_OPTIONS[0])},
     {CMD_ENGINE_STOP, "Engine Stop", "engine-stop", false, NULL, 0},
 };
 
-// ─── State ───────────────────────────────────────────────────────────────────
-
 static ActionMenu *s_menu;
 static ActionMenuLevel *s_level;
-static uint32_t s_available = 0xFFFFFFFF;
+static uint32_t s_available = 0xFFFFFFFF;  // All available by default.
 
-// ─── Callbacks ───────────────────────────────────────────────────────────────
+// Callbacks
 
 static void on_action(ActionMenu *menu, const ActionMenuItem *item, void *ctx) {
   DictionaryIterator *iter;
@@ -63,7 +57,7 @@ static void on_closed(ActionMenu *menu, const ActionMenuItem *item, void *ctx) {
   s_menu = NULL;
 }
 
-// ─── Public ──────────────────────────────────────────────────────────────────
+// Public API
 
 void commands_set_available(uint32_t bitmask) {
   s_available = bitmask;

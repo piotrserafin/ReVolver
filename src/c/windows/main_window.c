@@ -2,17 +2,35 @@
 
 #include "../modules/commands.h"
 
+// Persist keys
+#define PERSIST_VIN 1
+#define PERSIST_INFO 2
+#define PERSIST_CAR 3
+
 static Window *s_window;
 static TextLayer *s_title_layer, *s_vin_layer, *s_info_layer;
 static TextLayer *s_car_layer, *s_status_layer, *s_hint_layer;
 static AppTimer *s_revert_timer;
 
-static char s_vin[32] = "Not set";
-static char s_info[32] = "";
-static char s_car[48] = "";
-static char s_status[32] = "Open settings";
+static char s_vin[32];
+static char s_info[32];
+static char s_car[48];
+static char s_status[32];
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+static void load_persisted(void) {
+  if (persist_exists(PERSIST_VIN)) {
+    persist_read_string(PERSIST_VIN, s_vin, sizeof(s_vin));
+  } else {
+    snprintf(s_vin, sizeof(s_vin), "Not set");
+  }
+  if (persist_exists(PERSIST_INFO)) {
+    persist_read_string(PERSIST_INFO, s_info, sizeof(s_info));
+  }
+  if (persist_exists(PERSIST_CAR)) {
+    persist_read_string(PERSIST_CAR, s_car, sizeof(s_car));
+  }
+  snprintf(s_status, sizeof(s_status), "Connecting...");
+}
 
 static TextLayer *make_text(Layer *parent, GRect frame, const char *text, GFont font,
                             GTextAlignment align, GColor color) {
@@ -26,8 +44,6 @@ static TextLayer *make_text(Layer *parent, GRect frame, const char *text, GFont 
   return tl;
 }
 
-// ─── Status Management ───────────────────────────────────────────────────────
-
 static void revert_status(void *ctx) {
   s_revert_timer = NULL;
   snprintf(s_status, sizeof(s_status), "Ready");
@@ -37,18 +53,21 @@ static void revert_status(void *ctx) {
 
 void main_window_set_vin(const char *vin) {
   snprintf(s_vin, sizeof(s_vin), "%s", vin);
+  persist_write_string(PERSIST_VIN, s_vin);
   if (s_vin_layer)
     text_layer_set_text(s_vin_layer, s_vin);
 }
 
 void main_window_set_info(const char *info) {
   snprintf(s_info, sizeof(s_info), "%s", info);
+  persist_write_string(PERSIST_INFO, s_info);
   if (s_info_layer)
     text_layer_set_text(s_info_layer, s_info);
 }
 
 void main_window_set_car_status(const char *status) {
   snprintf(s_car, sizeof(s_car), "%s", status);
+  persist_write_string(PERSIST_CAR, s_car);
   if (s_car_layer)
     text_layer_set_text(s_car_layer, s_car);
 }
@@ -72,7 +91,7 @@ void main_window_show_temp_status(const char *text) {
   s_revert_timer = app_timer_register(3000, revert_status, NULL);
 }
 
-// ─── Window Handlers ─────────────────────────────────────────────────────────
+// Window Handlers
 
 static void on_select(ClickRecognizerRef ref, void *ctx) {
   commands_open_menu();
@@ -141,9 +160,10 @@ static void window_unload(Window *w) {
     app_timer_cancel(s_revert_timer);
 }
 
-// ─── Public ──────────────────────────────────────────────────────────────────
+// Public API
 
 void main_window_push(void) {
+  load_persisted();
   s_window = window_create();
   window_set_window_handlers(s_window, (WindowHandlers){
                                            .load = window_load,

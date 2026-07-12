@@ -51,6 +51,8 @@ static void inbox_received(DictionaryIterator *iter, void *ctx) {
   }
 }
 
+// Public API
+
 void messaging_init(void) {
   if (persist_exists(MESSAGE_KEY_VIBRATE)) {
     s_vibrate = persist_read_bool(MESSAGE_KEY_VIBRATE);
