@@ -1,7 +1,8 @@
+.DS_Store
+
 build/
 node_modules/
 .lock-waf_*
-screenshot*.png
 
 # Python
 __pycache__/

@@ -259,12 +259,18 @@ function fetchCommandAccessibility() {
   var vin = get(STORE.VIN);
   volvoGet('/vehicles/' + vin + '/command-accessibility', function (resp) {
     if (!resp) {
-      send({ STATUS_MSG: 'Ready' }); // Fallback on failure
+      send({ STATUS_MSG: 'Ready' });
       return;
     }
     var status = (resp.data && resp.data.availabilityStatus) || resp.availabilityStatus;
     if (status && status.value) {
-      send({ STATUS_MSG: status.value === 'AVAILABLE' ? 'Ready' : 'Car offline' });
+      console.log('Command accessibility: ' + status.value);
+      var msg = 'Ready';
+      if (status.value === 'AVAILABLE') msg = 'Ready';
+      else if (status.value === 'UNAVAILABLE') msg = 'Driving';
+      else if (status.value === 'UNSPECIFIED') msg = 'Ready';
+      else msg = status.value;
+      send({ STATUS_MSG: msg });
     } else {
       send({ STATUS_MSG: 'Ready' });
     }
@@ -273,15 +279,15 @@ function fetchCommandAccessibility() {
 
 function fetchCarStatus() {
   var vin = get(STORE.VIN);
-  var results = {};
-  var pending = 2;
+  var results = { lock: '?', engine: '?', fuel: '?', range: '?', windows: '?' };
+  var pending = 5;
 
   function finish() {
     if (--pending > 0) return;
-    var parts = [];
-    if (results.lock) parts.push(results.lock);
-    if (results.fuel) parts.push(results.fuel);
-    if (parts.length) send({ CAR_STATUS: parts.join(' | ') });
+    // Format: "lock|engine|fuel|range|windows"
+    var str = results.lock + '|' + results.engine + '|' + results.fuel + '|' +
+              results.range + '|' + results.windows;
+    send({ CAR_STATUS: str });
   }
 
   volvoGet('/vehicles/' + vin + '/doors', function (resp) {
@@ -294,12 +300,47 @@ function fetchCarStatus() {
     finish();
   });
 
+  volvoGet('/vehicles/' + vin + '/engine-status', function (resp) {
+    if (resp) {
+      var es = (resp.data && resp.data.engineStatus) || resp.engineStatus;
+      if (es && es.value) {
+        results.engine = es.value === 'RUNNING' ? 'Running' : 'Off';
+      }
+    }
+    finish();
+  });
+
   volvoGet('/vehicles/' + vin + '/fuel', function (resp) {
     if (resp) {
       var fuel = (resp.data && resp.data.fuelAmount) || resp.fuelAmount;
       if (fuel && fuel.value !== undefined) {
         results.fuel = Math.round(fuel.value) + 'L';
       }
+    }
+    finish();
+  });
+
+  volvoGet('/vehicles/' + vin + '/statistics', function (resp) {
+    if (resp) {
+      var data = resp.data || resp;
+      var dte = data.distanceToEmptyTank || data.distanceToEmpty;
+      if (dte && dte.value !== undefined) {
+        results.range = Math.round(dte.value) + 'km';
+      }
+    }
+    finish();
+  });
+
+  volvoGet('/vehicles/' + vin + '/windows', function (resp) {
+    if (resp) {
+      var data = resp.data || resp;
+      var open = [];
+      if (data.frontLeftWindow && data.frontLeftWindow.value === 'OPEN') open.push('FL');
+      if (data.frontRightWindow && data.frontRightWindow.value === 'OPEN') open.push('FR');
+      if (data.rearLeftWindow && data.rearLeftWindow.value === 'OPEN') open.push('BL');
+      if (data.rearRightWindow && data.rearRightWindow.value === 'OPEN') open.push('BR');
+      if (data.sunroof && data.sunroof.value === 'OPEN') open.push('RT');
+      results.windows = open.length > 0 ? open.join(' ') : 'OK';
     }
     finish();
   });
@@ -329,8 +370,19 @@ function executeCommand(command) {
     console.log('Manual refresh. RT: ' + (_rt ? _rt.substring(0, 8) + '...' : 'NONE') +
       ' | Token ' + (isNaN(_remaining) ? 'N/A' : (_remaining > 0 ? 'valid (' + _remaining + 's left)' : 'EXPIRED (' + (-_remaining) + 's ago)')) +
       ' | Refresh ' + (_needed ? 'NEEDED' : 'not needed'));
-    fetchCommandAccessibility();
-    fetchCarStatus();
+    if (_needed && _rt) {
+      refreshToken(function (ok) {
+        if (ok) {
+          fetchCommandAccessibility();
+          fetchCarStatus();
+        } else {
+          send({ STATUS_MSG: 'Re-login needed' });
+        }
+      });
+    } else {
+      fetchCommandAccessibility();
+      fetchCarStatus();
+    }
     return;
   }
 
@@ -388,9 +440,7 @@ function callApi(command, isRetry) {
     if (req.status >= 200 && req.status < 300) {
       var msg = (COMMANDS[apiPath] && COMMANDS[apiPath].success) || 'Done';
       sendResult(msg, true);
-      if (apiPath === 'lock' || apiPath === 'unlock') {
-        fetchCarStatus();
-      }
+      fetchCarStatus();
     } else if (req.status === 401 && !isRetry) {
       refreshToken(function (ok) {
         if (ok) callApi(command, true);

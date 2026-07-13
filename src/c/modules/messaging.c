@@ -18,10 +18,6 @@ static void vibrate(bool success) {
 static void inbox_received(DictionaryIterator *iter, void *ctx) {
   Tuple *t;
 
-  if ((t = dict_find(iter, MESSAGE_KEY_VIN))) {
-    main_window_set_vin(t->value->cstring);
-  }
-
   if ((t = dict_find(iter, MESSAGE_KEY_STATUS_MSG))) {
     main_window_set_status(t->value->cstring);
   }

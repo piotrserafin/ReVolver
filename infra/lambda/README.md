@@ -399,6 +399,7 @@ cdk deploy
 | vcc_api_key exposure   | Returned to client in token response (needed for direct API calls)         |
 | Origin validation      | Checked against SSM `allowed-origins` list                                 |
 | Error leaking          | Volvo error bodies sanitized — only `error` and `error_description` passed |
+| Unhandled exceptions   | Top-level try/catch returns generic 500 — no secrets/tokens in CloudWatch  |
 | SSM access             | IAM scoped to `/revolver/*` parameters only                                |
 | KMS decryption         | Restricted to SSM service context with parameter ARN condition             |
 | Config caching         | SSM values cached after cold start (no per-request SSM calls)              |

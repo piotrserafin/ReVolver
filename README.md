@@ -1,6 +1,6 @@
 # ReVolver
 
-> **Re**mote **Vol**vo controll**er** — also _volver_ (Spanish): "to return/come back" to your car :)
+**Re**mote **Vol**vo controll**er** — also _volver_ (Spanish): "to return/come back" to your car :)
 
 Remote control your Volvo from your Pebble smartwatch.
 
@@ -10,26 +10,20 @@ Remote control your Volvo from your Pebble smartwatch.
 - 📯 Honk / Honk + Flash
 - 🔒 Lock / Unlock doors
 - ❄️ Climate on / off
-- 🚗 Engine start / stop
-- 📊 Live status: lock state, fuel level, model info
+- 🚗 Engine start / stop (with duration picker)
+- 📊 Live dashboard: engine, doors, windows, fuel & range
+- 🔄 Loading spinner while fetching data
 - 🔔 Haptic feedback on command result (configurable)
 - 🎯 Dynamic command menu (only shows what your car supports)
+- 🔐 Confirmation prompts for sensitive actions (unlock, engine start)
 
 ## Screenshots
 
-```
-┌──────────────────┐    ┌──────────────────┐
-│    ReVolver      │    │  • Flash Lights  │
-│                  │    │    Honk          │
-│ YV1LFM1V1T14...  │    │    Honk + Flash  │
-│   XC60 2024      │    │    Lock          │
-│  Locked | 45L    │    │    Unlock        │
-│     Ready        │    │                  │
-│                  │    │                  │
-│ SELECT → commands│    │                  │
-└──────────────────┘    └──────────────────┘
-    Main Window             ActionMenu
-```
+<p align="center">
+  <img src="resources/images/screenshot_main.png" alt="Main Window" width="180">
+  &nbsp;&nbsp;
+  <img src="resources/images/screenshot_action.png" alt="Action Menu" width="180">
+</p>
 
 ## Supported Platforms
 
@@ -55,18 +49,16 @@ Pebble Watch ←BT→ Phone (PebbleKit JS) ←HTTPS→ Volvo Connected Vehicle A
 ## Project Layout
 
 ```
-src/c/ReVolver.c         Watch app (C) — UI, ActionMenu, AppMessage
+src/c/main.c             Entry point
+src/c/modules/           Messaging, commands logic
+src/c/windows/           Main window UI
 src/pkjs/index.js        Phone JS — API calls, token management, commands
 src/pkjs/config.json     Clay settings page (VIN input, vibration toggle)
 infra/                   AWS CDK stack (Lambda token exchange)
   infra/lambda/          Lambda function code
   infra/lib/             CDK stack definition
 doc/                     Documentation
-  doc/api.md             Volvo API endpoint reference
-  doc/auth.md            OAuth2 flow with sequence diagram
-  doc/sequences.md       App lifecycle sequence diagrams
-  doc/plan.md            Architecture options (auth hosting)
-  doc/scopes.md          Volvo OAuth scopes
+resources/images/        App icon and screenshots
 ```
 
 ## Building
@@ -120,27 +112,28 @@ pebble install --phone <IP>
 
 ## Usage
 
+- **UP** — Refresh car status
 - **SELECT** — Open command menu
 - **Pick a command** — Executes immediately, status shows result
-- **Vibration** — Single pulse = success, double = error
+- **Vibration** — Single pulse = success, triple = error
 
 ## Documentation
 
-| Document                             | Content                                         |
-| ------------------------------------ | ----------------------------------------------- |
-| [doc/api.md](doc/api.md)             | Volvo API endpoints and response formats        |
-| [doc/auth.md](doc/auth.md)           | OAuth2 authorization flow with sequence diagram |
-| [doc/sequences.md](doc/sequences.md) | Full app lifecycle sequence diagrams            |
-| [doc/plan.md](doc/plan.md)           | Architecture options for auth hosting           |
-| [doc/scopes.md](doc/scopes.md)       | Volvo OAuth scopes reference                    |
+| Document                       | Content                                  |
+| ------------------------------ | ---------------------------------------- |
+| [doc/api.md](doc/api.md)       | Volvo API endpoints and response formats |
+| [doc/scopes.md](doc/scopes.md) | Volvo OAuth scopes reference             |
 
 ## Security
 
 - `client_secret` never leaves AWS (stored in SSM, used by Lambda only)
+- Volvo requires client_secret (not pure PKCE) — server-side proxy is mandatory
 - OAuth2 PKCE prevents authorization code interception
 - VCC API key delivered with tokens (not hardcoded in app)
+- Lambda wrapped in try/catch to prevent secret leaks in CloudWatch
 - All communication over HTTPS
 - No secrets in source code or app binary
+- See [PRIVACY.md](PRIVACY.md) for full details
 
 ## License
 
