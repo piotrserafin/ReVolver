@@ -74,6 +74,19 @@ _request_origin = ""
 
 def lambda_handler(event, context):
     """Handle config, token exchange, and token refresh requests."""
+    try:
+        return _handle(event)
+    except Exception:
+        # Never log unhandled exceptions — tracebacks may contain secrets/tokens
+        return {
+            "statusCode": 500,
+            "headers": {"Content-Type": "application/json"},
+            "body": json.dumps({"error": "internal_error"}),
+        }
+
+
+def _handle(event):
+    """Internal request handler."""
     global _request_origin
     http = event.get("requestContext", {}).get("http", {})
     method = http.get("method", "")
@@ -107,8 +120,8 @@ def lambda_handler(event, context):
         if event.get("isBase64Encoded"):
             body = base64.b64decode(body).decode("utf-8")
         params = dict(urllib.parse.parse_qsl(body))
-    except Exception as e:
-        return cors_response(400, {"error": "invalid_request", "detail": str(e)})
+    except Exception:
+        return cors_response(400, {"error": "invalid_request"})
 
     grant_type = params.get("grant_type", "")
 
