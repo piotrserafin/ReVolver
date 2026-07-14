@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>ReVolver - Setup Guide</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="page-setup">
+  <h1>ReVolver Setup Guide</h1>
+  <p>Connect your Volvo to your Pebble watch in 2 steps.</p>
+
+  <div class="info">
+    <strong>Requirements:</strong>
+    <ul>
+      <li>A Volvo car with active <strong>Volvo Cars connected services</strong></li>
+      <li>A <strong>Volvo ID</strong> (the account you use in the Volvo Cars app)</li>
+    </ul>
+  </div>
+
+  <h2>Step 1: Log In</h2>
+
+  <div class="step">
+    <span class="step-num">1.</span> Open ReVolver settings on your phone (Pebble app &rarr; ReVolver &rarr; Settings).
+  </div>
+
+  <div class="step">
+    <span class="step-num">2.</span> Tap <strong>Log in with Volvo ID</strong>. You'll be redirected to Volvo's secure login page.
+  </div>
+
+  <div class="step">
+    <span class="step-num">3.</span> Sign in with your Volvo ID and approve access when prompted.
+  </div>
+
+  <div class="step">
+    <span class="step-num">4.</span> After authorization, tap <strong>Return to Pebble</strong> to send your credentials to the watch.
+  </div>
+
+  <h2>Step 2: Enter Your VIN</h2>
+
+  <div class="step">
+    <span class="step-num">5.</span> In the ReVolver settings on your phone, enter your VIN and tap <strong>Save</strong>.
+  </div>
+
+  <h2>That's it!</h2>
+  <p>Your Pebble will now show live data from your Volvo &mdash; fuel level, range, trip stats, and more. You can also lock/unlock, honk, flash lights, and control climatization from your wrist.</p>
+
+  <h2>Token Refresh</h2>
+  <div class="info">
+    <strong>How tokens work:</strong>
+    <ul>
+      <li>Access tokens expire after ~60 minutes</li>
+      <li>ReVolver refreshes automatically in the background</li>
+      <li>Refresh tokens expire if unused for <strong>7 days</strong></li>
+      <li>After <strong>6 months</strong>, you'll need to log in again</li>
+    </ul>
+  </div>
+
+  <div class="warn">
+    <strong>If you see "API err 401":</strong> Your token has expired. Re-open settings and log in again.
+  </div>
+
+  <h2>Privacy &amp; Security</h2>
+  <div class="info">
+    <ul>
+      <li>ReVolver uses OAuth2 with PKCE &mdash; your Volvo ID password is never shared with us</li>
+      <li>Token exchange happens on a secure backend &mdash; no secrets in the app</li>
+      <li>You can revoke access at any time from your <a href="https://volvoid.eu.volvocars.com/" target="_blank" rel="noopener">Volvo ID account</a></li>
+    </ul>
+  </div>
+
+  <div class="footer">
+    ReVolver for Pebble &mdash; Volvo Connected Vehicle Remote Control
+  </div>
+</body>
+</html>

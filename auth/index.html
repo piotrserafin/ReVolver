@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>ReVolver - Volvo Auth</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="page-auth">
+  <div class="logo">ReVolver</div>
+  <div class="subtitle">Volvo Connected Vehicle for Pebble</div>
+  <p id="status" role="status" aria-live="polite"></p>
+  <div id="action"></div>
+  <div class="guide-link"><a href="setup.html">Setup guide</a> · <a href="license.html">License</a></div>
+
+  <noscript>
+    <div class="noscript">JavaScript is required for Volvo ID authentication.</div>
+  </noscript>
+
+  <script>
+    var LAMBDA_URL = 'https://tpl5qhrn75bxzps77pdqllhxuy0mckgw.lambda-url.eu-central-1.on.aws/';
+    var ALLOWED_AUTH_ORIGIN = 'https://volvoid.eu.volvocars.com/';
+
+    var $status = document.getElementById('status');
+    var $action = document.getElementById('action');
+
+    // --- Utilities ---
+
+    function param(name) {
+      var m = location.search.match(new RegExp('[?&]' + name + '=([^&]*)'));
+      return m ? decodeURIComponent(m[1]) : null;
+    }
+
+    function randomString(len) {
+      var chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+      var arr = new Uint8Array(len);
+      crypto.getRandomValues(arr);
+      var result = '';
+      for (var i = 0; i < len; i++) {
+        result += chars[arr[i] & 63];
+      }
+      return result;
+    }
+
+    function sha256Base64url(str) {
+      return crypto.subtle.digest('SHA-256', new TextEncoder().encode(str))
+        .then(function(buf) {
+          return btoa(String.fromCharCode.apply(null, new Uint8Array(buf)))
+            .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+        });
+    }
+
+    function request(method, url, body, cb) {
+      var xhr = new XMLHttpRequest();
+      xhr.open(method, url);
+      if (body) xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+      xhr.onload = function() { cb(null, xhr.status, xhr.responseText); };
+      xhr.onerror = function() { cb('Network error'); };
+      xhr.send(body || null);
+    }
+
+    function showLoading(msg) {
+      var spinner = document.createElement('span');
+      spinner.className = 'spinner';
+      $status.textContent = '';
+      $status.appendChild(spinner);
+      $status.appendChild(document.createTextNode(msg));
+    }
+
+    function clearAction() {
+      while ($action.firstChild) $action.removeChild($action.firstChild);
+    }
+
+    function showError(title, detail) {
+      $status.textContent = title;
+      var container = document.createElement('div');
+      if (detail) {
+        var errDiv = document.createElement('div');
+        errDiv.className = 'error';
+        errDiv.textContent = detail;
+        container.appendChild(errDiv);
+      }
+      var retryLink = document.createElement('a');
+      retryLink.className = 'btn';
+      retryLink.href = location.pathname;
+      retryLink.textContent = 'Try Again';
+      container.appendChild(retryLink);
+      clearAction();
+      $action.appendChild(container);
+    }
+
+    // --- OAuth Flow ---
+
+    var code = param('code');
+    var error = param('error');
+
+    if (code) {
+      exchangeToken();
+    } else if (error) {
+      showError('Authorization error', param('error_description') || error);
+    } else {
+      init();
+    }
+
+    // Step 1: Fetch config from Lambda, show login button
+    function init() {
+      showLoading('Loading...');
+      request('GET', LAMBDA_URL, null, function(err, status, body) {
+        if (err || status !== 200) {
+          return showError('Cannot reach auth server', err || body);
+        }
+        var cfg;
+        try { cfg = JSON.parse(body); }
+        catch (e) { return showError('Invalid server response', 'Expected JSON from auth server.'); }
+
+        if (!cfg.client_id || !cfg.redirect_uri || !cfg.scopes || !cfg.auth_endpoint) {
+          return showError('Invalid config', 'Missing required fields from auth server.');
+        }
+        if (cfg.auth_endpoint.indexOf(ALLOWED_AUTH_ORIGIN) !== 0) {
+          return showError('Invalid config', 'Untrusted auth endpoint.');
+        }
+
+        $status.textContent = 'Connect your Volvo account';
+        clearAction();
+
+        var btn = document.createElement('button');
+        btn.className = 'btn';
+        btn.type = 'button';
+        btn.id = 'loginBtn';
+        btn.textContent = 'Log in with Volvo ID';
+        btn.onclick = function() { startAuth(cfg); };
+        $action.appendChild(btn);
+
+        var info = document.createElement('div');
+        info.className = 'info';
+        info.textContent = "You'll be redirected to Volvo's secure login page.";
+        $action.appendChild(info);
+      });
+    }
+
+    // Step 2: Redirect to Volvo ID
+    function startAuth(cfg) {
+      var verifier = randomString(64);
+      var state = randomString(32);
+      sessionStorage.setItem('pkce_verifier', verifier);
+      sessionStorage.setItem('oauth_state', state);
+
+      sha256Base64url(verifier).then(function(challenge) {
+        location.href = cfg.auth_endpoint +
+          '?response_type=code' +
+          '&client_id=' + encodeURIComponent(cfg.client_id) +
+          '&redirect_uri=' + encodeURIComponent(cfg.redirect_uri) +
+          '&scope=' + encodeURIComponent(cfg.scopes) +
+          '&state=' + encodeURIComponent(state) +
+          '&code_challenge=' + encodeURIComponent(challenge) +
+          '&code_challenge_method=S256';
+      });
+    }
+
+    // Step 3: Exchange code for tokens via AWS Lambda
+    function exchangeToken() {
+      var verifier = sessionStorage.getItem('pkce_verifier');
+      var savedState = sessionStorage.getItem('oauth_state');
+
+      if (!savedState || param('state') !== savedState) {
+        sessionStorage.removeItem('pkce_verifier');
+        sessionStorage.removeItem('oauth_state');
+        return showError('Security error', 'State mismatch or session expired.');
+      }
+      if (!verifier) {
+        sessionStorage.removeItem('oauth_state');
+        return showError('Session expired', 'Please try again.');
+      }
+
+      showLoading('Exchanging code for token...');
+
+      var body = 'grant_type=authorization_code' +
+        '&code=' + encodeURIComponent(code) +
+        '&code_verifier=' + encodeURIComponent(verifier);
+
+      request('POST', LAMBDA_URL, body, function(err, status, resp) {
+        if (err) return showError('Network error', err);
+        if (status !== 200) {
+          try { var e = JSON.parse(resp); return showError('Token error: ' + status, e.detail || e.error || resp); }
+          catch (x) { return showError('Token error: ' + status, resp); }
+        }
+
+        var data;
+        try { data = JSON.parse(resp); }
+        catch (e) { return showError('Invalid token response', 'Server returned non-JSON.'); }
+
+        var payload = JSON.stringify({
+          ACCESS_TOKEN: data.access_token,
+          REFRESH_TOKEN: data.refresh_token || '',
+          EXPIRES_IN: data.expires_in || 3600,
+          VCC_API_KEY: data.vcc_api_key || ''
+        });
+
+        sessionStorage.removeItem('pkce_verifier');
+        sessionStorage.removeItem('oauth_state');
+
+        $status.textContent = 'Connected to Volvo!';
+        clearAction();
+
+        var link = document.createElement('a');
+        link.className = 'btn btn-success';
+        link.href = 'pebblejs://close#' + encodeURIComponent(payload);
+        link.textContent = 'Return to Pebble';
+        $action.appendChild(link);
+      });
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,135 @@
+/* ReVolver Auth — Shared Styles */
+
+/* Base */
+:root {
+  --bg: #141414;
+  --bg-card: #1e1e1e;
+  --fg: #fff;
+  --fg-muted: #a0a0a0;
+  --fg-dim: #707070;
+  --accent: #1c6bba;
+  --accent-hover: #2080d8;
+  --success: #2e7d32;
+  --success-hover: #388e3c;
+  --error: #c0392b;
+  --error-fg: #e0a0a0;
+  --warn: #d4870e;
+  --border: #2a2a2a;
+  --fg-code: #a0c4e8;
+  --radius: 4px;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: 'Volvo Novum', -apple-system, sans-serif;
+  margin: 0;
+}
+
+/* Buttons */
+.btn {
+  display: inline-block;
+  background: var(--accent);
+  color: var(--fg);
+  text-decoration: none;
+  padding: 16px 32px;
+  font-size: 18px;
+  border-radius: var(--radius);
+  margin-top: 20px;
+  border: none;
+  cursor: pointer;
+  font-weight: 500;
+  letter-spacing: 0.3px;
+}
+.btn:hover { background: var(--accent-hover); }
+.btn-success { background: var(--success); }
+.btn-success:hover { background: var(--success-hover); }
+
+/* Cards */
+.info, .error, .warn {
+  background: var(--bg-card);
+  border-left: 3px solid var(--accent);
+  padding: 12px 16px;
+  border-radius: 0 var(--radius) var(--radius) 0;
+  font-size: 13px;
+  text-align: left;
+}
+.info, .error {
+  margin: 12px auto;
+  max-width: 400px;
+  color: var(--fg-muted);
+}
+.error { border-left-color: var(--error); color: var(--error-fg); }
+.warn { border-left-color: var(--warn); margin: 12px 0; font-size: inherit; }
+
+/* Lists inside cards */
+.info ul, .warn ul { margin: 8px 0 0; padding-left: 20px; }
+
+/* Auth page (index.html) */
+.page-auth {
+  text-align: center;
+  padding: 40px 20px;
+}
+.page-auth .logo { font-size: 28px; font-weight: 700; margin-bottom: 4px; letter-spacing: -0.5px; }
+.page-auth .subtitle { font-size: 13px; color: var(--fg-dim); margin-bottom: 32px; text-transform: uppercase; letter-spacing: 1px; }
+.page-auth #status { font-size: 16px; color: var(--fg-muted); }
+.page-auth .info { margin: 24px auto; }
+.page-auth .error { margin: 24px auto; }
+.page-auth .guide-link { display: block; margin-top: 32px; font-size: 12px; color: var(--fg-dim); }
+.page-auth .guide-link a { color: var(--accent); }
+
+/* Spinner */
+.spinner {
+  display: inline-block;
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--fg-dim);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  vertical-align: middle;
+  margin-right: 8px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Setup page (setup.html) */
+.page-setup {
+  padding: 20px;
+  max-width: 640px;
+  margin: 0 auto;
+  line-height: 1.6;
+  color: var(--fg-muted);
+}
+.page-setup h1 { color: var(--fg); font-size: 24px; font-weight: 700; letter-spacing: -0.5px; }
+.page-setup h2 { color: var(--fg); font-size: 18px; margin-top: 32px; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+.page-setup a { color: var(--accent); }
+.page-setup code { background: var(--bg-card); padding: 2px 6px; border-radius: 3px; font-size: 14px; color: var(--fg-code); }
+.page-setup .step { background: var(--bg-card); border-left: 3px solid var(--accent); padding: 12px 16px; margin: 12px 0; border-radius: 0 var(--radius) var(--radius) 0; }
+.page-setup .step-num { color: var(--accent); font-weight: bold; font-size: 16px; }
+.page-setup .info { max-width: none; margin: 12px 0; }
+.page-setup .warn { margin: 12px 0; }
+.page-setup .license-text {
+  background: var(--bg-card);
+  padding: 16px 20px;
+  border-radius: var(--radius);
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--fg-muted);
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  overflow-x: auto;
+}
+.page-setup .footer { margin-top: 40px; padding-top: 16px; border-top: 1px solid var(--border); font-size: 12px; color: var(--fg-dim); }
+
+/* Noscript */
+.noscript {
+  background: var(--bg-card);
+  border: 1px solid var(--error);
+  color: var(--error-fg);
+  padding: 20px;
+  margin: 40px auto;
+  max-width: 400px;
+  border-radius: var(--radius);
+  text-align: center;
+  font-size: 14px;
+}

@@ -1,0 +1,44 @@
+name: Deploy Auth Frontend
+
+on:
+  push:
+    branches: [main]
+    paths: ['auth/**']
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout ReVolver
+        uses: actions/checkout@v6
+
+      - name: Checkout ReVolverAuth
+        uses: actions/checkout@v6
+        with:
+          repository: piotrserafin/ReVolverAuth
+          ssh-key: ${{ secrets.REVOLVERAUTH_DEPLOY_KEY }}
+          path: target
+
+      - name: Sync files
+        run: |
+          # Remove old files (except .git)
+          find target -maxdepth 1 -not -name '.git' -not -name '.' -not -name '..' -exec rm -rf {} +
+          # Copy auth sources
+          cp auth/* target/
+
+      - name: Push changes
+        working-directory: target
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to push"
+          else
+            git commit -m "sync: update from ReVolver infra/auth"
+            git push
+          fi

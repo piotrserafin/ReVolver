@@ -54,6 +54,7 @@ src/c/modules/           Messaging, commands logic
 src/c/windows/           Main window UI
 src/pkjs/index.js        Phone JS — API calls, token management, commands
 src/pkjs/config.json     Clay settings page (VIN input, vibration toggle)
+auth/                    OAuth frontend (synced to ReVolverAuth repo)
 infra/                   AWS CDK stack (Lambda token exchange)
   infra/lambda/          Lambda function code
   infra/lib/             CDK stack definition
