@@ -448,8 +448,14 @@ function callApi(command, isRetry) {
       });
     } else if (req.status === 404) {
       sendResult('Not supported', false);
+    } else if (req.status === 409) {
+      sendResult('Already done', false);
     } else if (req.status === 422) {
       sendResult('Car busy, try later', false);
+    } else if (req.status === 403) {
+      sendResult('Not authorized', false);
+    } else if (req.status >= 500) {
+      sendResult('Volvo server error', false);
     } else {
       sendResult('Error: ' + req.status, false);
     }
