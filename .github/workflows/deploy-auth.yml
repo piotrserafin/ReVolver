@@ -26,7 +26,9 @@ jobs:
       - name: Sync files
         run: |
           # Remove old files (except .git)
-          find target -maxdepth 1 -not -name '.git' -not -name '.' -not -name '..' -exec rm -rf {} +
+          cd target
+          ls -A | grep -v '^.git$' | xargs rm -rf
+          cd ..
           # Copy auth sources
           cp auth/* target/
 
