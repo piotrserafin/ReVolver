@@ -11,7 +11,7 @@ Remote control your Volvo from your Pebble smartwatch.
 - 🔒 Lock / Unlock doors
 - ❄️ Climate on / off
 - 🚗 Engine start / stop (with duration picker)
-- 📊 Live dashboard: engine, doors, windows, fuel & range
+- 📊 Live dashboard: engine, doors, windows, fuel/battery & range
 - 🔄 Loading spinner while fetching data
 - 🔔 Haptic feedback on command result (configurable)
 - 🎯 Dynamic command menu (only shows what your car supports)
@@ -124,6 +124,8 @@ pebble install --phone <IP>
 | ------------------------------ | ---------------------------------------- |
 | [doc/api.md](doc/api.md)       | Volvo API endpoints and response formats |
 | [doc/scopes.md](doc/scopes.md) | Volvo OAuth scopes reference             |
+| [doc/connected-vehicle-c3-specification.json](doc/connected-vehicle-c3-specification.json) | Connected Vehicle API OpenAPI spec (v2)  |
+| [doc/energy-api-specification.json](doc/energy-api-specification.json) | Energy API OpenAPI spec (v2)             |
 
 ## Security
 

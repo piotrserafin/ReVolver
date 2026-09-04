@@ -20,8 +20,8 @@ The token exchange is handled by a backend Lambda — no secrets are exposed in 
 
 ## Token Refresh
 
-- Access tokens expire after ~60 minutes
 - The Pebble JS layer refreshes automatically via the Lambda
+- Access tokens expire after **~5 minutes**
 - Refresh tokens expire if unused for **7 days**
 - Maximum grant lifetime is **6 months** — then re-authenticate
 

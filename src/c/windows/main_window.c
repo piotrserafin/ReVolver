@@ -5,6 +5,23 @@
 // Persist keys
 #define PERSIST_INFO 1
 
+// CAR_STATUS wire format: "lock|engine|energy|range|windows|type"
+// Sent from PebbleKit JS; parsed by parse_car_status().
+#define CAR_STATUS_SEP '|'
+#define CAR_STATUS_TYPE_BATTERY 'B'  // energy type marker ('F' = fuel, 'B' = battery)
+
+enum {
+  FIELD_LOCK = 0,
+  FIELD_ENGINE,
+  FIELD_ENERGY,
+  FIELD_RANGE,
+  FIELD_WINDOWS,
+  FIELD_TYPE,
+  CAR_STATUS_FIELD_COUNT
+};
+
+#define CAR_STATUS_MAX_LEN 96  // max wire-string length (must fit all fields + separators)
+
 // Spinner
 #define SPINNER_SIZE 40
 #define SPINNER_INTERVAL_MS 80
@@ -26,46 +43,55 @@ static int32_t s_spinner_angle;
 static bool s_data_loaded;
 
 static char s_info[32];
-static char s_car[64];
+static char s_car[CAR_STATUS_MAX_LEN];
 static char s_doors[32];
 static char s_engine_str[32];
 static char s_windows[32];
 static char s_fuel[32];
+static char s_fuel_label[16];
 static char s_status[32];
 
 static void parse_car_status(const char *raw) {
-  // Format: "lock|engine|fuel|range|windows"
-  char buf[64];
+  // Wire format: "lock|engine|energy|range|windows|type" (see CAR_STATUS_* above)
+  char buf[CAR_STATUS_MAX_LEN];
   snprintf(buf, sizeof(buf), "%s", raw);
 
-  char *fields[5] = {NULL, NULL, NULL, NULL, NULL};
+  char *fields[CAR_STATUS_FIELD_COUNT];
+  for (int i = 0; i < CAR_STATUS_FIELD_COUNT; i++) fields[i] = NULL;
+
   int idx = 0;
-  fields[0] = buf;
-  for (char *p = buf; *p && idx < 4; p++) {
-    if (*p == '|') {
+  fields[idx] = buf;
+  for (char *p = buf; *p && idx < CAR_STATUS_FIELD_COUNT - 1; p++) {
+    if (*p == CAR_STATUS_SEP) {
       *p = '\0';
       fields[++idx] = p + 1;
     }
   }
 
-  if (fields[0]) snprintf(s_doors, sizeof(s_doors), "%s", fields[0]);
-  if (fields[1]) snprintf(s_engine_str, sizeof(s_engine_str), "%s", fields[1]);
+  if (fields[FIELD_LOCK])
+    snprintf(s_doors, sizeof(s_doors), "%.*s", (int)(sizeof(s_doors) - 1), fields[FIELD_LOCK]);
+  if (fields[FIELD_ENGINE])
+    snprintf(s_engine_str, sizeof(s_engine_str), "%.*s", (int)(sizeof(s_engine_str) - 1), fields[FIELD_ENGINE]);
 
-  if (fields[4]) {
-    if (strcmp(fields[4], "OK") == 0) {
+  // Energy row label: Battery for EVs, Fuel otherwise
+  bool is_battery = fields[FIELD_TYPE] && fields[FIELD_TYPE][0] == CAR_STATUS_TYPE_BATTERY;
+  snprintf(s_fuel_label, sizeof(s_fuel_label), "%s", is_battery ? "Battery" : "Fuel");
+
+  if (fields[FIELD_WINDOWS]) {
+    if (strcmp(fields[FIELD_WINDOWS], "OK") == 0) {
       snprintf(s_windows, sizeof(s_windows), "Closed");
-    } else if (fields[4][0] == '?') {
+    } else if (fields[FIELD_WINDOWS][0] == '?') {
       snprintf(s_windows, sizeof(s_windows), "?");
     } else {
-      snprintf(s_windows, sizeof(s_windows), "%s", fields[4]);
+      snprintf(s_windows, sizeof(s_windows), "%.*s", (int)(sizeof(s_windows) - 1), fields[FIELD_WINDOWS]);
     }
   }
 
-  if (fields[2]) {
-    if (fields[3] && fields[3][0] != '?') {
-      snprintf(s_fuel, sizeof(s_fuel), "%s (%s)", fields[2], fields[3]);
+  if (fields[FIELD_ENERGY]) {
+    if (fields[FIELD_RANGE] && fields[FIELD_RANGE][0] != '?') {
+      snprintf(s_fuel, sizeof(s_fuel), "%s (%s)", fields[FIELD_ENERGY], fields[FIELD_RANGE]);
     } else {
-      snprintf(s_fuel, sizeof(s_fuel), "%s", fields[2]);
+      snprintf(s_fuel, sizeof(s_fuel), "%s", fields[FIELD_ENERGY]);
     }
   }
 }
@@ -78,10 +104,16 @@ static void load_persisted(void) {
 }
 
 static void update_car_layers(void) {
-  if (s_lock_layer) text_layer_set_text(s_lock_layer, s_doors);
-  if (s_engine_layer) text_layer_set_text(s_engine_layer, s_engine_str);
-  if (s_windows_layer) text_layer_set_text(s_windows_layer, s_windows);
-  if (s_fuel_layer) text_layer_set_text(s_fuel_layer, s_fuel);
+  if (s_lock_layer)
+    text_layer_set_text(s_lock_layer, s_doors);
+  if (s_engine_layer)
+    text_layer_set_text(s_engine_layer, s_engine_str);
+  if (s_windows_layer)
+    text_layer_set_text(s_windows_layer, s_windows);
+  if (s_fuel_lbl)
+    text_layer_set_text(s_fuel_lbl, s_fuel_label);
+  if (s_fuel_layer)
+    text_layer_set_text(s_fuel_layer, s_fuel);
 }
 
 static void set_data_visible(bool visible) {
@@ -104,18 +136,19 @@ static void spinner_draw(Layer *layer, GContext *ctx) {
 
   int32_t start = s_spinner_angle;
   int32_t end = start + TRIG_MAX_ANGLE * 3 / 4;  // 270° arc
-  graphics_draw_arc(ctx, grect_inset(bounds, GEdgeInsets(2)),
-                    GOvalScaleModeFitCircle, start, end);
+  graphics_draw_arc(ctx, grect_inset(bounds, GEdgeInsets(2)), GOvalScaleModeFitCircle, start, end);
 }
 
 static void spinner_tick(void *ctx) {
   s_spinner_angle = (s_spinner_angle + SPINNER_STEP) % TRIG_MAX_ANGLE;
-  if (s_spinner_layer) layer_mark_dirty(s_spinner_layer);
+  if (s_spinner_layer)
+    layer_mark_dirty(s_spinner_layer);
   s_spinner_timer = app_timer_register(SPINNER_INTERVAL_MS, spinner_tick, NULL);
 }
 
 static void spinner_start(void) {
-  if (s_spinner_layer) layer_set_hidden(s_spinner_layer, false);
+  if (s_spinner_layer)
+    layer_set_hidden(s_spinner_layer, false);
   if (!s_spinner_timer) {
     s_spinner_angle = 0;
     spinner_tick(NULL);
@@ -127,7 +160,8 @@ static void spinner_stop(void) {
     app_timer_cancel(s_spinner_timer);
     s_spinner_timer = NULL;
   }
-  if (s_spinner_layer) layer_set_hidden(s_spinner_layer, true);
+  if (s_spinner_layer)
+    layer_set_hidden(s_spinner_layer, true);
 }
 
 // TextLayer helper
@@ -161,7 +195,8 @@ static void separator_draw(Layer *layer, GContext *ctx) {
 static void revert_status(void *ctx) {
   s_revert_timer = NULL;
   snprintf(s_status, sizeof(s_status), "Ready");
-  if (s_status_layer) text_layer_set_text(s_status_layer, s_status);
+  if (s_status_layer)
+    text_layer_set_text(s_status_layer, s_status);
 }
 
 // Public API
@@ -169,7 +204,8 @@ static void revert_status(void *ctx) {
 void main_window_set_info(const char *info) {
   snprintf(s_info, sizeof(s_info), "%s", info);
   persist_write_string(PERSIST_INFO, s_info);
-  if (s_info_layer) text_layer_set_text(s_info_layer, s_info);
+  if (s_info_layer)
+    text_layer_set_text(s_info_layer, s_info);
 }
 
 void main_window_set_car_status(const char *status) {
@@ -184,9 +220,13 @@ void main_window_set_car_status(const char *status) {
 }
 
 void main_window_set_status(const char *text) {
-  if (s_revert_timer) { app_timer_cancel(s_revert_timer); s_revert_timer = NULL; }
+  if (s_revert_timer) {
+    app_timer_cancel(s_revert_timer);
+    s_revert_timer = NULL;
+  }
   snprintf(s_status, sizeof(s_status), "%s", text);
-  if (s_status_layer) text_layer_set_text(s_status_layer, s_status);
+  if (s_status_layer)
+    text_layer_set_text(s_status_layer, s_status);
 
   if (strcmp(text, "Refreshing...") == 0 || strcmp(text, "Connecting...") == 0) {
     // Loading state → show spinner, hide data
@@ -200,9 +240,11 @@ void main_window_set_status(const char *text) {
 }
 
 void main_window_show_temp_status(const char *text) {
-  if (s_revert_timer) app_timer_cancel(s_revert_timer);
+  if (s_revert_timer)
+    app_timer_cancel(s_revert_timer);
   snprintf(s_status, sizeof(s_status), "%s", text);
-  if (s_status_layer) text_layer_set_text(s_status_layer, s_status);
+  if (s_status_layer)
+    text_layer_set_text(s_status_layer, s_status);
   s_revert_timer = app_timer_register(3000, revert_status, NULL);
 }
 
@@ -219,9 +261,13 @@ static void on_up(ClickRecognizerRef ref, void *ctx) {
     app_message_outbox_send();
   }
   // Don't hide existing data on manual refresh, just show status
-  if (s_revert_timer) { app_timer_cancel(s_revert_timer); s_revert_timer = NULL; }
+  if (s_revert_timer) {
+    app_timer_cancel(s_revert_timer);
+    s_revert_timer = NULL;
+  }
   snprintf(s_status, sizeof(s_status), "Refreshing...");
-  if (s_status_layer) text_layer_set_text(s_status_layer, s_status);
+  if (s_status_layer)
+    text_layer_set_text(s_status_layer, s_status);
 }
 
 static void click_config(void *ctx) {
@@ -281,13 +327,15 @@ static void window_load(Window *w) {
                               fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD), GTextAlignmentRight,
                               PBL_IF_COLOR_ELSE(GColorMediumSpringGreen, GColorWhite));
 
-  // Row 4: Fuel
-  s_fuel_lbl = make_text(root, GRect(margin, row_start + 3 * row_h, width, row_h), "Fuel",
-                         fonts_get_system_font(FONT_KEY_GOTHIC_24), GTextAlignmentLeft,
-                         GColorWhite);
-  s_fuel_layer = make_text(root, GRect(margin, row_start + 3 * row_h, width, row_h), s_fuel,
-                           fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD), GTextAlignmentRight,
-                           GColorWhite);
+  // Row 4: Fuel / Battery
+  if (s_fuel_label[0] == '\0')
+    snprintf(s_fuel_label, sizeof(s_fuel_label), "Fuel");
+  s_fuel_lbl =
+      make_text(root, GRect(margin, row_start + 3 * row_h, width, row_h), s_fuel_label,
+                fonts_get_system_font(FONT_KEY_GOTHIC_24), GTextAlignmentLeft, GColorWhite);
+  s_fuel_layer =
+      make_text(root, GRect(margin, row_start + 3 * row_h, width, row_h), s_fuel,
+                fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD), GTextAlignmentRight, GColorWhite);
 
   // Spinner (centered in data area)
   int spinner_x = (b.size.w - SPINNER_SIZE) / 2;
@@ -324,7 +372,8 @@ static void window_unload(Window *w) {
   text_layer_destroy(s_status_layer);
   layer_destroy(s_separator_layer);
   layer_destroy(s_spinner_layer);
-  if (s_revert_timer) app_timer_cancel(s_revert_timer);
+  if (s_revert_timer)
+    app_timer_cancel(s_revert_timer);
 }
 
 void main_window_push(void) {

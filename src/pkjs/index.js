@@ -9,6 +9,9 @@ var LAMBDA_URL = 'https://tpl5qhrn75bxzps77pdqllhxuy0mckgw.lambda-url.eu-central
 // Connected Vehicle API
 var VOLVO_API = 'https://api.volvocars.com/connected-vehicle/v2';
 
+// Energy API v2 (battery state for EVs/PHEVs; requires energy:state:read scope)
+var ENERGY_API = 'https://api.volvocars.com/energy/v2';
+
 // Command registry (must match C COMMANDS[] bit flags)
 var COMMANDS = {
   'flash':               { bit: 0x01, success: 'Flashed!' },
@@ -31,7 +34,8 @@ var STORE = {
   EXPIRES_AT: 'revolver_expires_at',
   VCC_API_KEY: 'revolver_vcc_api_key',
   CAR_INFO: 'revolver_car_info',
-  AVAILABLE_COMMANDS: 'revolver_commands'
+  AVAILABLE_COMMANDS: 'revolver_commands',
+  ENERGY_CAPABLE: 'revolver_energy_capable'
 };
 
 // Storage
@@ -50,11 +54,20 @@ function clear(key) {
 
 // HTTP Helper
 
+// Unwraps a Volvo response (which may or may not nest under `data`) and
+// returns the named field, or undefined.
+function field(resp, name) {
+  var payload = resp && (resp.data || resp);
+  return payload && payload[name];
+}
+
 function volvoGet(path, cb) {
+  var url = path.indexOf('http') === 0 ? path : VOLVO_API + path;
   var req = new XMLHttpRequest();
-  req.open('GET', VOLVO_API + path);
+  req.open('GET', url);
   req.setRequestHeader('Authorization', 'Bearer ' + get(STORE.ACCESS_TOKEN));
   req.setRequestHeader('vcc-api-key', get(STORE.VCC_API_KEY));
+  req.setRequestHeader('Accept', 'application/json');
   req.onload = function () {
     if (req.status === 200) {
       try {
@@ -109,7 +122,7 @@ function refreshToken(cb) {
   req.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
   req.onload = function () {
     refreshInFlight = false;
-    var cbs = refreshQueue;
+    var callbacks = refreshQueue;
     refreshQueue = [];
 
     if (req.status === 200) {
@@ -124,8 +137,8 @@ function refreshToken(cb) {
         set(STORE.EXPIRES_AT, String(Math.floor(Date.now() / 1000) + data.expires_in));
       if (data.vcc_api_key) set(STORE.VCC_API_KEY, data.vcc_api_key);
       console.log('Token refreshed. RT: ' + (data.refresh_token ? data.refresh_token.substring(0, 8) + '...' : 'NONE'));
-      cbs.forEach(function (fn) {
-        fn(true);
+      callbacks.forEach(function (callback) {
+        callback(true);
       });
     } else {
       console.log('Refresh failed: ' + req.status + ' ' + req.responseText);
@@ -134,18 +147,18 @@ function refreshToken(cb) {
         clear(STORE.REFRESH_TOKEN);
         clear(STORE.EXPIRES_AT);
       }
-      cbs.forEach(function (fn) {
-        fn(false);
+      callbacks.forEach(function (callback) {
+        callback(false);
       });
     }
   };
   req.onerror = function () {
     refreshInFlight = false;
-    var cbs = refreshQueue;
+    var callbacks = refreshQueue;
     refreshQueue = [];
     console.log('Refresh network error');
-    cbs.forEach(function (fn) {
-      fn(false);
+    callbacks.forEach(function (callback) {
+      callback(false);
     });
   };
   req.send('grant_type=refresh_token&refresh_token=' + encodeURIComponent(token));
@@ -262,14 +275,10 @@ function fetchCommandAccessibility() {
       send({ STATUS_MSG: 'Ready' });
       return;
     }
-    var status = (resp.data && resp.data.availabilityStatus) || resp.availabilityStatus;
+    var status = field(resp, 'availabilityStatus');
     if (status && status.value) {
       console.log('Command accessibility: ' + status.value);
-      var msg = 'Ready';
-      if (status.value === 'AVAILABLE') msg = 'Ready';
-      else if (status.value === 'UNAVAILABLE') msg = 'Driving';
-      else if (status.value === 'UNSPECIFIED') msg = 'Ready';
-      else msg = status.value;
+      var msg = status.value === 'UNAVAILABLE' ? 'Driving' : 'Ready';
       send({ STATUS_MSG: msg });
     } else {
       send({ STATUS_MSG: 'Ready' });
@@ -277,70 +286,148 @@ function fetchCommandAccessibility() {
   });
 }
 
-function fetchCarStatus() {
+function fetchEnergyCapability(cb) {
+  var cached = get(STORE.ENERGY_CAPABLE);
+  if (cached === '1' || cached === '0') {
+    cb(cached === '1');
+    return;
+  }
+  // Not yet known for this VIN — check once and cache (capabilities are static per vehicle)
   var vin = get(STORE.VIN);
-  var results = { lock: '?', engine: '?', fuel: '?', range: '?', windows: '?' };
-  var pending = 5;
+  volvoGet(ENERGY_API + '/vehicles/' + vin + '/capabilities', function (resp) {
+    if (!resp) {
+      // Couldn't determine (network/endpoint error) — don't cache, retry next launch
+      cb(false);
+      return;
+    }
+    var payload = resp.data || resp;
+    var energyState = payload.getEnergyState;
+    var capable = !!(energyState && energyState.isSupported === true);
+    set(STORE.ENERGY_CAPABLE, capable ? '1' : '0');
+    console.log('Energy state capable: ' + capable);
+    cb(capable);
+  });
+}
+
+function fetchCarStatus() {
+  // Resolve energy capability once per VIN, then fetch live status.
+  fetchEnergyCapability(doFetchCarStatus);
+}
+
+function doFetchCarStatus(energyCapable) {
+  var vin = get(STORE.VIN);
+  var data = {
+    lock: '?', engine: '?', windows: '?',
+    fuel: null, fuelRange: null, fuelRangeUnit: null,
+    battery: null, electricRange: null, electricRangeUnit: null
+  };
+  var pending = energyCapable ? 6 : 5;
+
+  function distUnit(unit) {
+    return String(unit || '').toLowerCase().indexOf('mi') === 0 ? 'mi' : 'km';
+  }
 
   function finish() {
     if (--pending > 0) return;
-    // Format: "lock|engine|fuel|range|windows"
-    var str = results.lock + '|' + results.engine + '|' + results.fuel + '|' +
-              results.range + '|' + results.windows;
+
+    // Decide energy display: liquid fuel takes priority; battery for EVs.
+    var type, value, range;
+    if (data.fuel !== null) {
+      type = 'F';
+      value = Math.round(data.fuel) + 'L';
+      range = data.fuelRange !== null ? Math.round(data.fuelRange) + distUnit(data.fuelRangeUnit) : '?';
+    } else if (data.battery !== null) {
+      type = 'B';
+      value = Math.round(data.battery) + '%';
+      range = data.electricRange !== null ? Math.round(data.electricRange) + distUnit(data.electricRangeUnit) : '?';
+    } else {
+      type = 'F';
+      value = '?';
+      range = '?';
+    }
+
+    // Format: "lock|engine|value|range|windows|type" (type: F=fuel, B=battery)
+    var str = data.lock + '|' + data.engine + '|' + value + '|' +
+              range + '|' + data.windows + '|' + type;
     send({ CAR_STATUS: str });
   }
 
   volvoGet('/vehicles/' + vin + '/doors', function (resp) {
-    if (resp) {
-      var lock = (resp.data && resp.data.centralLock) || resp.centralLock;
-      if (lock && lock.value) {
-        results.lock = lock.value === 'LOCKED' ? 'Locked' : 'Unlocked';
+    // Central lock can report LOCKED while an individual door/tailgate is
+    // still UNLOCKED. Treat the car as Unlocked if any lockable field is.
+    var lockFields = ['centralLock', 'tailgate', 'frontLeftDoor',
+      'frontRightDoor', 'rearLeftDoor', 'rearRightDoor', 'hood', 'tankLid'];
+    var sawValue = false, anyUnlocked = false;
+    for (var i = 0; i < lockFields.length; i++) {
+      var lockField = field(resp, lockFields[i]);
+      if (lockField && lockField.value) {
+        sawValue = true;
+        if (lockField.value === 'UNLOCKED') anyUnlocked = true;
       }
+    }
+    if (sawValue) {
+      data.lock = anyUnlocked ? 'Unlocked' : 'Locked';
     }
     finish();
   });
 
   volvoGet('/vehicles/' + vin + '/engine-status', function (resp) {
-    if (resp) {
-      var es = (resp.data && resp.data.engineStatus) || resp.engineStatus;
-      if (es && es.value) {
-        results.engine = es.value === 'RUNNING' ? 'Running' : 'Off';
-      }
+    var engineStatus = field(resp, 'engineStatus');
+    if (engineStatus && engineStatus.value) {
+      data.engine = engineStatus.value === 'RUNNING' ? 'Running' : 'Off';
     }
     finish();
   });
 
   volvoGet('/vehicles/' + vin + '/fuel', function (resp) {
-    if (resp) {
-      var fuel = (resp.data && resp.data.fuelAmount) || resp.fuelAmount;
-      if (fuel && fuel.value !== undefined) {
-        results.fuel = Math.round(fuel.value) + 'L';
-      }
+    var fuel = field(resp, 'fuelAmount');
+    if (fuel && fuel.value !== undefined && fuel.value !== null) {
+      var amount = parseFloat(fuel.value);
+      if (!isNaN(amount)) data.fuel = amount;
     }
     finish();
   });
 
   volvoGet('/vehicles/' + vin + '/statistics', function (resp) {
-    if (resp) {
-      var data = resp.data || resp;
-      var dte = data.distanceToEmptyTank || data.distanceToEmpty;
-      if (dte && dte.value !== undefined) {
-        results.range = Math.round(dte.value) + 'km';
+    var distanceToEmpty = field(resp, 'distanceToEmpty');
+    if (distanceToEmpty && distanceToEmpty.value !== undefined && distanceToEmpty.value !== null) {
+      var range = parseFloat(distanceToEmpty.value);
+      if (!isNaN(range)) {
+        data.fuelRange = range;
+        data.fuelRangeUnit = distanceToEmpty.unit;
+      }
+    }
+    finish();
+  });
+
+  // Energy API v2 — battery charge + electric range (full EV / PHEV)
+  if (energyCapable) volvoGet(ENERGY_API + '/vehicles/' + vin + '/state', function (resp) {
+    var batteryLevel = field(resp, 'batteryChargeLevel');
+    if (batteryLevel && batteryLevel.status === 'OK' && batteryLevel.value !== undefined && batteryLevel.value !== null) {
+      var battery = parseFloat(batteryLevel.value);
+      if (!isNaN(battery)) data.battery = battery;
+    }
+    var electricRange = field(resp, 'electricRange');
+    if (electricRange && electricRange.status === 'OK' && electricRange.value !== undefined && electricRange.value !== null) {
+      var electric = parseFloat(electricRange.value);
+      if (!isNaN(electric)) {
+        data.electricRange = electric;
+        data.electricRangeUnit = electricRange.unit;
       }
     }
     finish();
   });
 
   volvoGet('/vehicles/' + vin + '/windows', function (resp) {
-    if (resp) {
-      var data = resp.data || resp;
-      var open = [];
-      if (data.frontLeftWindow && data.frontLeftWindow.value === 'OPEN') open.push('FL');
-      if (data.frontRightWindow && data.frontRightWindow.value === 'OPEN') open.push('FR');
-      if (data.rearLeftWindow && data.rearLeftWindow.value === 'OPEN') open.push('BL');
-      if (data.rearRightWindow && data.rearRightWindow.value === 'OPEN') open.push('BR');
-      if (data.sunroof && data.sunroof.value === 'OPEN') open.push('RT');
-      results.windows = open.length > 0 ? open.join(' ') : 'OK';
+    var payload = resp && (resp.data || resp);
+    if (payload) {
+      var openWindows = [];
+      if (payload.frontLeftWindow && payload.frontLeftWindow.value === 'OPEN') openWindows.push('FL');
+      if (payload.frontRightWindow && payload.frontRightWindow.value === 'OPEN') openWindows.push('FR');
+      if (payload.rearLeftWindow && payload.rearLeftWindow.value === 'OPEN') openWindows.push('BL');
+      if (payload.rearRightWindow && payload.rearRightWindow.value === 'OPEN') openWindows.push('BR');
+      if (payload.sunroof && payload.sunroof.value === 'OPEN') openWindows.push('RT');
+      data.windows = openWindows.length > 0 ? openWindows.join(' ') : 'OK';
     }
     finish();
   });
@@ -362,15 +449,15 @@ function isCommandAvailable(command) {
 
 function executeCommand(command) {
   if (command === 'refresh') {
-    var _rt = get(STORE.REFRESH_TOKEN);
-    var _exp = parseInt(get(STORE.EXPIRES_AT), 10);
-    var _now = Math.floor(Date.now() / 1000);
-    var _remaining = isNaN(_exp) ? NaN : _exp - _now;
-    var _needed = isNaN(_remaining) || _remaining < 60;
-    console.log('Manual refresh. RT: ' + (_rt ? _rt.substring(0, 8) + '...' : 'NONE') +
-      ' | Token ' + (isNaN(_remaining) ? 'N/A' : (_remaining > 0 ? 'valid (' + _remaining + 's left)' : 'EXPIRED (' + (-_remaining) + 's ago)')) +
-      ' | Refresh ' + (_needed ? 'NEEDED' : 'not needed'));
-    if (_needed && _rt) {
+    var refresh = get(STORE.REFRESH_TOKEN);
+    var expiresAt = parseInt(get(STORE.EXPIRES_AT), 10);
+    var now = Math.floor(Date.now() / 1000);
+    var remaining = isNaN(expiresAt) ? NaN : expiresAt - now;
+    var needsRefresh = isNaN(remaining) || remaining < 60;
+    console.log('Manual refresh. RT: ' + (refresh ? refresh.substring(0, 8) + '...' : 'NONE') +
+      ' | Token ' + (isNaN(remaining) ? 'N/A' : (remaining > 0 ? 'valid (' + remaining + 's left)' : 'EXPIRED (' + (-remaining) + 's ago)')) +
+      ' | Refresh ' + (needsRefresh ? 'NEEDED' : 'not needed'));
+    if (needsRefresh && refresh) {
       refreshToken(function (ok) {
         if (ok) {
           fetchCommandAccessibility();
@@ -435,6 +522,7 @@ function callApi(command, isRetry) {
   req.setRequestHeader('Content-Type', 'application/json');
   req.setRequestHeader('Authorization', 'Bearer ' + get(STORE.ACCESS_TOKEN));
   req.setRequestHeader('vcc-api-key', get(STORE.VCC_API_KEY));
+  req.setRequestHeader('Accept', 'application/json');
   req.onload = function () {
     console.log('API ' + req.status + ': ' + req.responseText);
     if (req.status >= 200 && req.status < 300) {
@@ -478,11 +566,11 @@ Pebble.addEventListener('ready', function () {
   if (info) send({ CAR_INFO: info });
 
   if (tokenExpired()) {
-    var _rt = get(STORE.REFRESH_TOKEN);
-    var _exp = parseInt(get(STORE.EXPIRES_AT), 10);
-    var _now = Math.floor(Date.now() / 1000);
-    console.log('Token expired on launch. RT: ' + (_rt ? _rt.substring(0, 8) + '...' : 'NONE'));
-    console.log('Expires: ' + (isNaN(_exp) ? 'N/A' : new Date(_exp * 1000).toISOString()) + ' (remaining: ' + (_exp - _now) + 's)');
+    var refresh = get(STORE.REFRESH_TOKEN);
+    var expiresAt = parseInt(get(STORE.EXPIRES_AT), 10);
+    var now = Math.floor(Date.now() / 1000);
+    console.log('Token expired on launch. RT: ' + (refresh ? refresh.substring(0, 8) + '...' : 'NONE'));
+    console.log('Expires: ' + (isNaN(expiresAt) ? 'N/A' : new Date(expiresAt * 1000).toISOString()) + ' (remaining: ' + (expiresAt - now) + 's)');
     send({ STATUS_MSG: 'Refreshing...' });
     refreshToken(function () {
       sendStatus();
@@ -540,6 +628,7 @@ Pebble.addEventListener('webviewclosed', function (e) {
         if (oldVin && oldVin !== String(vin)) {
           clear(STORE.CAR_INFO);
           clear(STORE.AVAILABLE_COMMANDS);
+          clear(STORE.ENERGY_CAPABLE);
         }
       }
     }

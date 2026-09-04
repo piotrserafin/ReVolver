@@ -54,6 +54,8 @@ doc/
   sequences.md              - App lifecycle sequence diagrams
   plan.md                   - Auth hosting architecture options
   scopes.md                 - Volvo OAuth scopes
+  connected-vehicle-c3-specification.json - Volvo Connected Vehicle API OpenAPI spec (v2)
+  energy-api-specification.json - Volvo Energy API OpenAPI spec (v2)
 infra/
   lambda/token_exchange.py  - Lambda handler (OAuth proxy)
   lambda/README.md          - Lambda documentation
@@ -183,7 +185,7 @@ See `doc/auth.md` for full sequence diagram and `infra/lambda/README.md` for why
 
 ## Volvo Connected Vehicle API
 
-See `doc/api.md` for full endpoint reference.
+See `doc/api.md` for full endpoint reference. The complete Connected Vehicle API OpenAPI (v2) spec is in `doc/connected-vehicle-c3-specification.json`, and the Energy API (v2) spec is in `doc/energy-api-specification.json`.
 
 ### API Calls on Launch
 
@@ -192,12 +194,14 @@ See `doc/api.md` for full endpoint reference.
 3. `GET /vehicles/{vin}` — model, year (cached)
 4. `GET /vehicles/{vin}/doors` — lock status
 5. `GET /vehicles/{vin}/fuel` — fuel level
+6. `GET /energy/v2/vehicles/{vin}/capabilities` — once per VIN, checks `getEnergyState.isSupported` (cached); gates the `/state` call
+7. `GET /energy/v2/vehicles/{vin}/state` — EV battery % + electric range (only if capable; shows "Battery" label; needs `energy:state:read` scope)
 
 ### Cached Data
 
 | Storage | Data | Cache Policy |
 |---------|------|-------------|
-| JS localStorage | `car_info`, `commands`, tokens | Cleared on VIN change or re-login |
+| JS localStorage | `car_info`, `commands`, `energy_capable`, tokens | Cleared on VIN change or re-login |
 | Watch persist | VIN, car info, car status | Updated on every message, instant on launch |
 
 ## Known Issues
