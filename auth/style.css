@@ -77,7 +77,6 @@ body {
 .page-auth .error { margin: 24px auto; }
 .page-auth .guide-link { display: block; margin-top: 32px; font-size: 12px; color: var(--fg-dim); }
 .page-auth .guide-link a { color: var(--accent); }
-.page-auth .env-banner { display: inline-block; margin-bottom: 24px; padding: 4px 12px; border-radius: var(--radius); background: var(--warn); color: #000; font-size: 12px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; }
 
 /* Spinner */
 .spinner {
