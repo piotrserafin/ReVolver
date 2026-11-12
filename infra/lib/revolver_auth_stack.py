@@ -11,19 +11,25 @@ from constructs import Construct
 
 class ReVolverAuthStack(Stack):
 
-    def __init__(self, scope: Construct, id: str, **kwargs) -> None:
+    def __init__(
+        self, scope: Construct, id: str, *, stage: str = "prod", **kwargs
+    ) -> None:
         super().__init__(scope, id, **kwargs)
 
         stack = Stack.of(self)
 
         # ─── SSM Parameters (created manually once, read at runtime) ───
-        # Store secrets with:
+        # Store secrets with (prefix /revolver for prod, /revolver-dev for dev):
         #   aws ssm put-parameter --name /revolver/client-id --value "xxx" --type SecureString
         #   aws ssm put-parameter --name /revolver/client-secret --value "xxx" --type SecureString
         #   aws ssm put-parameter --name /revolver/redirect-uri --value "https://..." --type String
         #   aws ssm put-parameter --name /revolver/allowed-origins --value "https://piotrserafin.github.io,https://piotrserafin.dev" --type String
+        #
+        # Dev uses a separate prefix, not /revolver/dev: the prod policy grants
+        # parameter/revolver/*, which would let prod read dev secrets.
 
-        ssm_prefix = "/revolver"
+        ssm_prefix = "/revolver" if stage == "prod" else f"/revolver-{stage}"
+        description_suffix = "" if stage == "prod" else f" ({stage})"
 
         # Execution role with SSM read access
         lambda_role = iam.Role(
@@ -71,7 +77,8 @@ class ReVolverAuthStack(Stack):
         token_function = lambda_.Function(
             self,
             "TokenExchangeFunction",
-            description="ReVolver OAuth2 token exchange proxy for Volvo ID",
+            description="ReVolver OAuth2 token exchange proxy for Volvo ID"
+            + description_suffix,
             code=lambda_.Code.from_asset("lambda"),  # infra/lambda/
             runtime=lambda_.Runtime.PYTHON_3_12,
             handler="token_exchange.lambda_handler",
