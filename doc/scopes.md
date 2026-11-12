@@ -3,6 +3,13 @@
 OAuth scopes requested by ReVolver during login. Configured in SSM under
 `/revolver/scopes` (space-separated) and sent in the `authorize` request.
 
+**Prod vs dev** (checked 2026-11-12):
+
+- Prod (`/revolver/scopes`): every scope below **except** `location:read` (27 scopes).
+- Dev (`/revolver-dev/scopes`): all 28 scopes below, plus `offline_access` if the dev Volvo
+  app is a Keycloak (`vid-dc-…`) client. Every scope must also be enabled on the dev Volvo
+  app in the developer portal, or authorize fails with `invalid_scope`.
+
 Endpoint paths are relative to their API base URL:
 
 - Connected Vehicle: `https://api.volvocars.com/connected-vehicle/v2`
@@ -56,6 +63,8 @@ Energy API v1 (`recharge-status`, now 410 GONE) — v2 requires the `energy:*` s
 | `energy:capability:read` | Read which energy data points a vehicle supports                      | `GET /vehicles/{vin}/capabilities` |
 
 ## Location
+
+Dev only for now; not in prod `/revolver/scopes`. Not used by the app yet.
 
 | Scope           | Description                                               | Endpoint                                   |
 | --------------- | --------------------------------------------------------- | ------------------------------------------ |

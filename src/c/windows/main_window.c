@@ -34,6 +34,9 @@ static TextLayer *s_lock_lbl, *s_lock_layer;
 static TextLayer *s_windows_lbl, *s_windows_layer;
 static TextLayer *s_fuel_lbl, *s_fuel_layer;
 static TextLayer *s_status_layer;
+#ifdef REVOLVER_DEV
+static TextLayer *s_dev_layer;  // "DEV" tag, only in REVOLVER_ENV=dev builds
+#endif
 static Layer *s_separator_layer;
 static Layer *s_spinner_layer;
 static AppTimer *s_revert_timer;
@@ -296,6 +299,14 @@ static void window_load(Window *w) {
       make_text(root, GRect(margin, info_y, width, 34), s_info,
                 fonts_get_system_font(FONT_KEY_GOTHIC_28_BOLD), GTextAlignmentCenter, GColorWhite);
 
+#ifdef REVOLVER_DEV
+  // Dev build marker: top-left corner on rect, top-center on round (corners are clipped)
+  GRect dev_frame = PBL_IF_ROUND_ELSE(GRect(0, 0, b.size.w, 16), GRect(2, 0, 30, 16));
+  s_dev_layer = make_text(root, dev_frame, "DEV", fonts_get_system_font(FONT_KEY_GOTHIC_14_BOLD),
+                          PBL_IF_ROUND_ELSE(GTextAlignmentCenter, GTextAlignmentLeft),
+                          PBL_IF_COLOR_ELSE(GColorChromeYellow, GColorWhite));
+#endif
+
   // Data area
   int data_area_top = header_h + 4;
   int data_area_bottom = b.size.h - footer_h;
@@ -370,6 +381,9 @@ static void window_unload(Window *w) {
   text_layer_destroy(s_fuel_lbl);
   text_layer_destroy(s_fuel_layer);
   text_layer_destroy(s_status_layer);
+#ifdef REVOLVER_DEV
+  text_layer_destroy(s_dev_layer);
+#endif
   layer_destroy(s_separator_layer);
   layer_destroy(s_spinner_layer);
   if (s_revert_timer)

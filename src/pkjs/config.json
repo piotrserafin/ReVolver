@@ -46,7 +46,7 @@
       },
       {
         "type": "text",
-        "defaultValue": "<a href='https://piotrserafin.github.io/ReVolverAuth/' class='item-container-outline'>Log in with Volvo ID</a>"
+        "defaultValue": "<a href='{{AUTH_URL}}' class='item-container-outline'>Log in with Volvo ID</a>"
       }
     ]
   },

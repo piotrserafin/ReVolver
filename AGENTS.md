@@ -25,6 +25,22 @@ pebble screenshot --scale 6 --no-open screenshot.png  # Screenshot
 
 If you need more information on the `pebble` command or a sub-command, append `--help`.
 
+### Dev Environment
+
+Build-time switch. A plain `pebble build` is always prod; the dev URL never ships in a release `.pbw`.
+
+```bash
+REVOLVER_ENV=dev pebble build            # dev Lambda + auth page ?env=dev + "DEV" tag on watch
+pebble build                             # prod (default; CI release builds this)
+cdk deploy -c stage=dev                  # dev stack (manual only; CI deploys prod)
+```
+
+- `wscript` generates `src/pkjs/env.js` (gitignored) with `ENV`, `LAMBDA_URL`, `AUTH_URL`, and adds `-DREVOLVER_DEV` for C in dev builds. URLs live in `ENVIRONMENTS` in `wscript`.
+- `src/pkjs/config.json` has a `{{AUTH_URL}}` placeholder in the login link; `index.js` fills it from `env.js` before creating Clay.
+- Auth page: `?env=dev` selects the dev Lambda from a fixed allowlist (`LAMBDA_URLS` in `auth/index.html`), kept in `sessionStorage` across the Volvo redirect, with a DEV banner.
+- Switching env: sideloading clears PebbleKit JS localStorage, so log in again after switching.
+- Dev stack setup: `infra/lambda/README.md` → "Dev Stack".
+
 ### Headless Environments
 
 Add `--vnc` to all emulator commands (installs, screenshots, button presses):
@@ -50,12 +66,19 @@ src/pkjs/
   config.json               - Clay settings (VIN, vibration toggle)
 doc/
   api.md                    - Volvo API endpoint reference
-  auth.md                   - OAuth2 flow with sequence diagram
-  sequences.md              - App lifecycle sequence diagrams
-  plan.md                   - Auth hosting architecture options
   scopes.md                 - Volvo OAuth scopes
+  features.md               - Planned features (Quick Launch, Keycloak migration, dev env)
   connected-vehicle-c3-specification.json - Volvo Connected Vehicle API OpenAPI spec (v2)
   energy-api-specification.json - Volvo Energy API OpenAPI spec (v2)
+  location-specification.json   - Volvo Location API OpenAPI spec
+  (missing: auth.md, sequences.md, plan.md — referenced below, not yet written)
+auth/
+  index.html                - ReVolverAuth login page (synced to ReVolverAuth repo by CI)
+  setup.html, license.html, style.css
+.github/workflows/
+  deploy-auth.yml           - push to main (auth/**) → sync to ReVolverAuth (GitHub Pages)
+  deploy-lambda.yml         - push to main (infra/**) → cdk deploy (no approval)
+  release.yml               - tag v* → pebble build → GitHub release (.pbw)
 infra/
   lambda/token_exchange.py  - Lambda handler (OAuth proxy)
   lambda/README.md          - Lambda documentation
@@ -65,7 +88,7 @@ infra/
 
 ## App Flow
 
-See `doc/sequences.md` for detailed sequence diagrams covering:
+`doc/sequences.md` (not yet written; see `doc/features.md` #1) should hold sequence diagrams covering:
 - First launch (no tokens → settings → OAuth → ready)
 - Subsequent launch (cached data + token refresh)
 - Command execution (normal + 401 retry)
@@ -76,7 +99,7 @@ See `doc/sequences.md` for detailed sequence diagrams covering:
 - Title: "ReVolver" (28pt bold)
 - VIN (24pt bold) — persisted on watch
 - Car info: model + year (18pt) — persisted on watch
-- Car status: lock state + fuel level (18pt bold, green) — persisted on watch
+- Car status rows: doors (Locked/Unlocked), engine (Running/Off), windows (Closed or open list, e.g. "FL RT"), Fuel/Battery with range (e.g. "45L (520km)", "80% (60km)") — persisted on watch
 - Connection status (24pt bold): "Ready", "Car offline", "Connecting...", "Refreshing..."
 - Hint: "SELECT → commands"
 - **UP button** — manual refresh of car status
@@ -84,7 +107,7 @@ See `doc/sequences.md` for detailed sequence diagrams covering:
 ### ActionMenu (triggered by SELECT button)
 - Dynamic list based on vehicle capabilities (bitmask from `/commands` API)
 - Confirmation sub-menu for Unlock and Engine Start
-- Engine Start: time selection (1/5/10/15 min) → Confirm
+- Engine Start: time selection (1/3/5/10/15 min) → Confirm
 - Blue background on color watches (GColorCobaltBlue)
 
 ### Command Flow
@@ -128,7 +151,7 @@ var COMMANDS = {
 | `COMMAND` | 10002 | Watch → JS | string | Command to execute (e.g., "flash", "engine-start:10", "refresh") |
 | `COMMAND_RESULT` | 10003 | JS → Watch | string | `+text` or `-text` (prefix = success/error) |
 | `VIBRATE` | 10004 | JS → Watch | int | Settings: 1=on, 0=off. Persisted on watch. |
-| `CAR_STATUS` | 10005 | JS → Watch | string | Live car state ("Locked \| 45L") |
+| `CAR_STATUS` | 10005 | JS → Watch | string | Live car state `lock\|engine\|energy\|range\|windows\|type` (type `F`=fuel, `B`=battery), e.g. "Locked\|Off\|45L\|520km\|OK\|F" |
 | `CAR_INFO` | 10006 | JS → Watch | string | Model + year ("XC60 2024"). Cached. |
 | `AVAILABLE_CMDS` | 10007 | JS → Watch | int | Bitmask of supported commands |
 
@@ -150,11 +173,13 @@ var COMMANDS = {
 
 OAuth2 PKCE flow with Volvo ID. Lambda required because Volvo needs both PKCE AND `client_secret`.
 
-See `doc/auth.md` for full sequence diagram and `infra/lambda/README.md` for why Lambda is required.
+See `infra/lambda/README.md` for why Lambda is required. (`doc/auth.md` with the full sequence diagram is not yet written.)
 
-**Current:** GitHub Pages frontend (`ReVolverAuth` repo) + Lambda proxy.
+**Current:** GitHub Pages frontend (source in `auth/`, synced to the `ReVolverAuth` repo by `deploy-auth.yml`) + Lambda proxy.
 
-**Planned:** Lambda-only — see `doc/plan.md`.
+**Planned:** Volvo ID → Keycloak migration (deadline 2027-01-31), dev environment, optional device-flow login — see `doc/features.md` #2/#3. (`doc/plan.md`, the older auth hosting options doc, is missing.)
+
+**Deploys are automatic:** merging to `main` deploys the Lambda (`infra/**`) and the auth page (`auth/**`). Treat a merge touching those paths as a deploy.
 
 ### SSM Parameters (`/revolver` prefix)
 
@@ -165,9 +190,11 @@ See `doc/auth.md` for full sequence diagram and `infra/lambda/README.md` for why
 | `/revolver/vcc-api-key` | SecureString | ✅ | Volvo Connected Cars API key |
 | `/revolver/redirect-uri` | String | ✅ | OAuth redirect URI |
 | `/revolver/allowed-origins` | String | ✅ | Comma-separated CORS origins |
-| `/revolver/scopes` | String | Optional | OAuth scopes |
+| `/revolver/scopes` | String | ✅ (auth page rejects config without it) | OAuth scopes (space-separated) |
 | `/revolver/auth-endpoint` | String | Optional | Volvo auth URL |
 | `/revolver/token-endpoint` | String | Optional | Volvo token URL |
+
+Dev stack uses the same names under `/revolver-dev/*` (own Volvo app, extended `scopes`).
 
 ### Token Refresh
 
@@ -181,7 +208,9 @@ See `doc/auth.md` for full sequence diagram and `infra/lambda/README.md` for why
 
 - Auth frontend: `https://piotrserafin.github.io/ReVolverAuth/`
 - Volvo API: `https://api.volvocars.com/connected-vehicle/v2`
-- Lambda: `https://tpl5qhrn75bxzps77pdqllhxuy0mckgw.lambda-url.eu-central-1.on.aws/`
+- Lambda (prod): `https://tpl5qhrn75bxzps77pdqllhxuy0mckgw.lambda-url.eu-central-1.on.aws/`
+- Lambda (dev): `https://ckcflhkgzt3p6lsxad5uvxom740fkwbr.lambda-url.eu-central-1.on.aws/`
+- Auth frontend (dev): `https://piotrserafin.github.io/ReVolverAuth/?env=dev`
 
 ## Volvo Connected Vehicle API
 
@@ -189,13 +218,16 @@ See `doc/api.md` for full endpoint reference. The complete Connected Vehicle API
 
 ### API Calls on Launch
 
-1. `GET /vehicles/{vin}/command-accessibility` — is car online?
+1. `GET /vehicles/{vin}/command-accessibility` — is car online? (`UNAVAILABLE` → "Driving")
 2. `GET /vehicles/{vin}/commands` — available commands (cached, sent as bitmask)
 3. `GET /vehicles/{vin}` — model, year (cached)
-4. `GET /vehicles/{vin}/doors` — lock status
-5. `GET /vehicles/{vin}/fuel` — fuel level
-6. `GET /energy/v2/vehicles/{vin}/capabilities` — once per VIN, checks `getEnergyState.isSupported` (cached); gates the `/state` call
-7. `GET /energy/v2/vehicles/{vin}/state` — EV battery % + electric range (only if capable; shows "Battery" label; needs `energy:state:read` scope)
+4. `GET /vehicles/{vin}/doors` — lock status (Unlocked if central lock or any door/tailgate/hood/tank lid is UNLOCKED)
+5. `GET /vehicles/{vin}/engine-status` — engine running/off
+6. `GET /vehicles/{vin}/fuel` — fuel level
+7. `GET /vehicles/{vin}/statistics` — distance to empty (fuel range)
+8. `GET /vehicles/{vin}/windows` — open windows/sunroof
+9. `GET /energy/v2/vehicles/{vin}/capabilities` — once per VIN, checks `getEnergyState.isSupported` (cached); gates the `/state` call
+10. `GET /energy/v2/vehicles/{vin}/state` — EV battery % + electric range (only if capable; shows "Battery" label; needs `energy:state:read` scope)
 
 ### Cached Data
 
