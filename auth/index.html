@@ -18,16 +18,8 @@
   </noscript>
 
   <script>
-    // Fixed allowlist: ?env= can only pick one of these, never supply a URL.
-    var LAMBDA_URLS = {
-      prod: 'https://tpl5qhrn75bxzps77pdqllhxuy0mckgw.lambda-url.eu-central-1.on.aws/',
-      dev: 'https://ckcflhkgzt3p6lsxad5uvxom740fkwbr.lambda-url.eu-central-1.on.aws/'
-    };
-    // Legacy Volvo ID and Keycloak (migration deadline 2027-01-31, see doc/features.md #2)
-    var ALLOWED_AUTH_ORIGINS = [
-      'https://volvoid.eu.volvocars.com/',
-      'https://auth.volvocars.com/'
-    ];
+    var LAMBDA_URL = 'https://tpl5qhrn75bxzps77pdqllhxuy0mckgw.lambda-url.eu-central-1.on.aws/';
+    var ALLOWED_AUTH_ORIGIN = 'https://volvoid.eu.volvocars.com/';
 
     var $status = document.getElementById('status');
     var $action = document.getElementById('action');
@@ -37,41 +29,6 @@
     function param(name) {
       var m = location.search.match(new RegExp('[?&]' + name + '=([^&]*)'));
       return m ? decodeURIComponent(m[1]) : null;
-    }
-
-    function isAllowedAuthEndpoint(url) {
-      for (var i = 0; i < ALLOWED_AUTH_ORIGINS.length; i++) {
-        if (url.indexOf(ALLOWED_AUTH_ORIGINS[i]) === 0) return true;
-      }
-      return false;
-    }
-
-    // --- Environment ---
-    // The first visit carries ?env=dev from the Pebble app. The Volvo redirect back
-    // (?code= / ?error=) drops the query, so the choice is kept in sessionStorage.
-    // A plain visit (no params) is always prod.
-    function resolveEnv() {
-      var requested = param('env');
-      var env;
-      if (requested !== null) {
-        env = requested === 'dev' ? 'dev' : 'prod';
-      } else if (param('code') || param('error')) {
-        env = sessionStorage.getItem('revolver_env') === 'dev' ? 'dev' : 'prod';
-      } else {
-        env = 'prod';
-      }
-      sessionStorage.setItem('revolver_env', env);
-      return env;
-    }
-
-    var ENV = resolveEnv();
-    var LAMBDA_URL = LAMBDA_URLS[ENV];
-
-    if (ENV === 'dev') {
-      var banner = document.createElement('div');
-      banner.className = 'env-banner';
-      banner.textContent = 'DEV environment';
-      document.body.insertBefore(banner, document.body.firstChild);
     }
 
     function randomString(len) {
@@ -125,7 +82,7 @@
       }
       var retryLink = document.createElement('a');
       retryLink.className = 'btn';
-      retryLink.href = location.pathname + (ENV === 'dev' ? '?env=dev' : '');
+      retryLink.href = location.pathname;
       retryLink.textContent = 'Try Again';
       container.appendChild(retryLink);
       clearAction();
@@ -159,7 +116,7 @@
         if (!cfg.client_id || !cfg.redirect_uri || !cfg.scopes || !cfg.auth_endpoint) {
           return showError('Invalid config', 'Missing required fields from auth server.');
         }
-        if (!isAllowedAuthEndpoint(cfg.auth_endpoint)) {
+        if (cfg.auth_endpoint.indexOf(ALLOWED_AUTH_ORIGIN) !== 0) {
           return showError('Invalid config', 'Untrusted auth endpoint.');
         }
 
