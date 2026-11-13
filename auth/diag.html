@@ -47,6 +47,10 @@
     <h2>Errors</h2>
     <div id="errors">none</div>
 
+    <h2>Pebble app API</h2>
+    <table id="pebble"></table>
+    <a class="btn" href="#" id="openUrlBtn">Test: open this page in the system browser</a>
+
     <h2>Volvo login page test</h2>
     <p>Opens Volvo's account page (same login screen as ReVolver). Blank page there = same problem. Use BACK to return.</p>
     <a class="btn" href="https://auth.volvocars.com/realms/volvocars/account/">Open Volvo account page</a>
@@ -185,6 +189,33 @@
     reachImg('Image: www.google.com favicon', 'https://www.google.com/favicon.ico');
     reachImg('Image: www.volvocars.com favicon', 'https://www.volvocars.com/favicon.ico');
     row('net', 'navigator.onLine', String(navigator.onLine));
+
+    // --- Pebble app config-page API (Core Devices app injects window.Pebble) ---
+    function pebbleApi() {
+      row('pebble', 'window.Pebble', typeof window.Pebble === 'undefined' ? 'missing' : typeof window.Pebble,
+        typeof window.Pebble === 'undefined' ? 'bad' : 'ok');
+      var names = ['openUrl', 'sendMessage', 'webSignIn', 'targets'];
+      for (var i = 0; i < names.length; i++) {
+        var has = !!(window.Pebble && typeof window.Pebble[names[i]] === 'function');
+        row('pebble', 'Pebble.' + names[i], has ? 'yes' : 'NO', has ? 'ok' : 'bad');
+      }
+      var result = row('pebble', 'openUrl test result', 'not run');
+      document.getElementById('openUrlBtn').onclick = function (e) {
+        e.preventDefault();
+        if (!(window.Pebble && typeof window.Pebble.openUrl === 'function')) {
+          result.textContent = 'Pebble.openUrl not available'; result.className = 'bad';
+          return;
+        }
+        result.textContent = 'waiting for your answer...'; result.className = 'pending';
+        window.Pebble.openUrl(location.href.split('#')[0]).then(function (opened) {
+          result.textContent = 'resolved: ' + JSON.stringify(opened); result.className = opened ? 'ok' : 'bad';
+        }, function (err) {
+          result.textContent = 'rejected: ' + (err && (err.message || err)); result.className = 'bad';
+        });
+      };
+    }
+    // The API may be installed after load ("config API lands late")
+    setTimeout(pebbleApi, 500);
 
     // --- Errors ---
     setTimeout(function () {
