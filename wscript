@@ -20,7 +20,7 @@ ENVIRONMENTS = {
     },
     'dev': {
         'LAMBDA_URL': 'https://ckcflhkgzt3p6lsxad5uvxom740fkwbr.lambda-url.eu-central-1.on.aws/',
-        'AUTH_URL': AUTH_PAGE_URL + '?env=dev',
+        'AUTH_URL': 'https://piotrserafin.github.io/ReVolverAuth-dev/',
     },
 }
 

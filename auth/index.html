@@ -11,7 +11,7 @@
   <div class="subtitle">Volvo Connected Vehicle for Pebble</div>
   <p id="status" role="status" aria-live="polite"></p>
   <div id="action"></div>
-  <div class="guide-link"><a href="setup.html">Setup guide</a> · <a href="license.html">License</a></div>
+  <div class="guide-link"><a href="setup.html">Setup guide</a> · <a href="license.html">License</a> · <a href="diag.html">Diagnostics</a></div>
 
   <noscript>
     <div class="noscript">JavaScript is required for Volvo ID authentication.</div>
@@ -19,7 +19,15 @@
 
   <script>
     var LAMBDA_URL = 'https://tpl5qhrn75bxzps77pdqllhxuy0mckgw.lambda-url.eu-central-1.on.aws/';
-    var ALLOWED_AUTH_ORIGIN = 'https://volvoid.eu.volvocars.com/';
+    // Legacy Volvo ID and Keycloak (Volvo ID migration, deadline 2027-01-31)
+    var ALLOWED_AUTH_ORIGINS = ['https://volvoid.eu.volvocars.com/', 'https://auth.volvocars.com/'];
+
+    function isAllowedAuthEndpoint(url) {
+      for (var i = 0; i < ALLOWED_AUTH_ORIGINS.length; i++) {
+        if (url.indexOf(ALLOWED_AUTH_ORIGINS[i]) === 0) return true;
+      }
+      return false;
+    }
 
     var $status = document.getElementById('status');
     var $action = document.getElementById('action');
@@ -116,7 +124,7 @@
         if (!cfg.client_id || !cfg.redirect_uri || !cfg.scopes || !cfg.auth_endpoint) {
           return showError('Invalid config', 'Missing required fields from auth server.');
         }
-        if (cfg.auth_endpoint.indexOf(ALLOWED_AUTH_ORIGIN) !== 0) {
+        if (!isAllowedAuthEndpoint(cfg.auth_endpoint)) {
           return showError('Invalid config', 'Untrusted auth endpoint.');
         }
 

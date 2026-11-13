@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>ReVolver - Webview Diagnostics</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="style.css">
+  <style>
+    .diag { max-width: 520px; margin: 0 auto; padding: 16px; text-align: left; }
+    .diag h1 { font-size: 20px; margin: 0 0 4px; }
+    .diag p { font-size: 13px; color: var(--fg-muted); margin: 0 0 12px; }
+    .diag table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .diag td { padding: 4px 6px; border-bottom: 1px solid var(--border); vertical-align: top; word-break: break-word; }
+    .diag td.k { color: var(--fg-muted); width: 45%; }
+    .diag .ok { color: #6fcf73; font-weight: 700; }
+    .diag .bad { color: #ff7b6b; font-weight: 700; }
+    .diag .pending { color: var(--warn); }
+    .diag h2 { font-size: 14px; margin: 16px 0 4px; color: var(--fg-dim); text-transform: uppercase; letter-spacing: 1px; }
+    .diag .btn { display: block; margin: 12px 0; text-align: center; }
+    .diag #errors { font-family: monospace; font-size: 12px; color: var(--error-fg); white-space: pre-wrap; }
+  </style>
+  <script>
+    // Capture errors as early as possible (before anything else runs)
+    window.__diagErrors = [];
+    window.onerror = function (msg, src, line, col) {
+      window.__diagErrors.push(msg + ' @ ' + (src || '').split('/').pop() + ':' + line + ':' + col);
+    };
+  </script>
+</head>
+<body>
+  <div class="diag">
+    <h1>Webview diagnostics</h1>
+    <p>Checks what this browser supports. Nothing is sent anywhere. Take a screenshot of the whole page (scroll if needed).</p>
+
+    <h2>Browser</h2>
+    <table id="browser"></table>
+
+    <h2>JavaScript</h2>
+    <table id="js"></table>
+
+    <h2>Storage &amp; cookies</h2>
+    <table id="storage"></table>
+
+    <h2>Network</h2>
+    <table id="net"></table>
+
+    <h2>Errors</h2>
+    <div id="errors">none</div>
+
+    <h2>Volvo login page test</h2>
+    <p>Opens Volvo's account page (same login screen as ReVolver). Blank page there = same problem. Use BACK to return.</p>
+    <a class="btn" href="https://auth.volvocars.com/realms/volvocars/account/">Open Volvo account page</a>
+    <a class="btn" href="index.html">Back to login page</a>
+  </div>
+
+  <script>
+    // ES5 only: this page must run even where modern JavaScript does not.
+    function row(tableId, key, value, state) {
+      var tr = document.createElement('tr');
+      var k = document.createElement('td');
+      k.className = 'k';
+      k.textContent = key;
+      var v = document.createElement('td');
+      v.textContent = value;
+      if (state) v.className = state;
+      tr.appendChild(k);
+      tr.appendChild(v);
+      document.getElementById(tableId).appendChild(tr);
+      return v;
+    }
+
+    function check(tableId, key, fn) {
+      var ok;
+      try { ok = !!fn(); } catch (e) { ok = false; }
+      row(tableId, key, ok ? 'yes' : 'NO', ok ? 'ok' : 'bad');
+      return ok;
+    }
+
+    function syntax(code) {
+      return function () { new Function(code); return true; };
+    }
+
+    // --- Browser ---
+    var ua = navigator.userAgent;
+    var chrome = ua.match(/Chrome\/([\d.]+)/);
+    row('browser', 'User agent', ua);
+    row('browser', 'Chrome / WebView version', chrome ? chrome[1] : 'unknown');
+    row('browser', 'Is Android WebView', /; wv\)/.test(ua) ? 'yes (wv)' : 'no');
+    row('browser', 'Page origin', location.protocol + '//' + location.host);
+    row('browser', 'Referrer', document.referrer || '(none)');
+    row('browser', 'Screen / viewport', screen.width + 'x' + screen.height + ' / ' + window.innerWidth + 'x' + window.innerHeight);
+    row('browser', 'Language', navigator.language || '?');
+
+    // --- JavaScript features ---
+    check('js', 'ES modules (<script type=module>)', function () { return 'noModule' in document.createElement('script'); });
+    check('js', 'Promise', function () { return typeof Promise === 'function'; });
+    check('js', 'fetch', function () { return typeof fetch === 'function'; });
+    check('js', 'Arrow functions / let / const', syntax('let a = () => 1; const b = 2;'));
+    check('js', 'async / await', syntax('async function f() { await 1; }'));
+    check('js', 'Optional chaining ?.', syntax('var a = {}; a?.b;'));
+    check('js', 'Nullish coalescing ??', syntax('var a = null ?? 1;'));
+    check('js', 'Class fields (ES2022)', syntax('class A { x = 1; #y = 2; }'));
+    check('js', 'Array.prototype.at (ES2022)', function () { return typeof [].at === 'function'; });
+    check('js', 'Object.hasOwn (ES2022)', function () { return typeof Object.hasOwn === 'function'; });
+    check('js', 'structuredClone', function () { return typeof structuredClone === 'function'; });
+    check('js', 'crypto.subtle', function () { return window.crypto && window.crypto.subtle; });
+    check('js', 'crypto.randomUUID', function () { return window.crypto && typeof window.crypto.randomUUID === 'function'; });
+    check('js', 'WebAuthn (PublicKeyCredential)', function () { return typeof window.PublicKeyCredential === 'function'; });
+
+    // Dynamic import: real module execution test
+    var modCell = row('js', 'Module script actually runs', 'checking...', 'pending');
+    window.__diagModuleRan = function () { modCell.textContent = 'yes'; modCell.className = 'ok'; };
+    var ms = document.createElement('script');
+    ms.type = 'module';
+    ms.textContent = 'window.__diagModuleRan && window.__diagModuleRan();';
+    document.body.appendChild(ms);
+    setTimeout(function () {
+      if (modCell.className === 'pending') { modCell.textContent = 'NO (did not run)'; modCell.className = 'bad'; }
+    }, 1500);
+
+    // --- Storage & cookies ---
+    check('storage', 'navigator.cookieEnabled', function () { return navigator.cookieEnabled; });
+    check('storage', 'Cookie write/read', function () {
+      document.cookie = 'revolver_diag=1; path=/; SameSite=Lax';
+      var ok = document.cookie.indexOf('revolver_diag=1') !== -1;
+      document.cookie = 'revolver_diag=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+      return ok;
+    });
+    check('storage', 'localStorage', function () {
+      localStorage.setItem('revolver_diag', '1');
+      var ok = localStorage.getItem('revolver_diag') === '1';
+      localStorage.removeItem('revolver_diag');
+      return ok;
+    });
+    check('storage', 'sessionStorage', function () {
+      sessionStorage.setItem('revolver_diag', '1');
+      var ok = sessionStorage.getItem('revolver_diag') === '1';
+      sessionStorage.removeItem('revolver_diag');
+      return ok;
+    });
+    var idbCell = row('storage', 'IndexedDB', 'checking...', 'pending');
+    try {
+      var req = indexedDB.open('revolver_diag');
+      req.onsuccess = function () {
+        idbCell.textContent = 'yes'; idbCell.className = 'ok';
+        try { req.result.close(); indexedDB.deleteDatabase('revolver_diag'); } catch (e) {}
+      };
+      req.onerror = function () { idbCell.textContent = 'NO (error)'; idbCell.className = 'bad'; };
+    } catch (e) {
+      idbCell.textContent = 'NO (' + e.message + ')'; idbCell.className = 'bad';
+    }
+    check('storage', 'Service worker API', function () { return 'serviceWorker' in navigator; });
+
+    // --- Network: can this webview reach Volvo's login host? ---
+    function reach(label, url) {
+      var cell = row('net', label, 'checking...', 'pending');
+      if (typeof fetch !== 'function') { cell.textContent = 'skipped (no fetch)'; return; }
+      var t0 = Date.now();
+      fetch(url, { mode: 'no-cors', cache: 'no-store' }).then(function () {
+        cell.textContent = 'reachable (' + (Date.now() - t0) + ' ms)'; cell.className = 'ok';
+      }, function (e) {
+        cell.textContent = 'NO (' + (e && e.message) + ')'; cell.className = 'bad';
+      });
+    }
+    reach('auth.volvocars.com (new login)', 'https://auth.volvocars.com/realms/volvocars/.well-known/openid-configuration');
+    reach('volvoid.eu.volvocars.com (old login)', 'https://volvoid.eu.volvocars.com/.well-known/openid-configuration');
+    row('net', 'navigator.onLine', String(navigator.onLine));
+
+    // --- Errors ---
+    setTimeout(function () {
+      var errs = window.__diagErrors;
+      document.getElementById('errors').textContent = errs.length ? errs.join('\n') : 'none';
+    }, 2000);
+  </script>
+</body>
+</html>

@@ -251,7 +251,10 @@ Watch: "Login needed" → SELECT → "Log in"
 - [x] Infra: `stage` context, `ReVolverAuthStack-dev`, `/revolver-dev` prefix. Prod synth byte-identical to before.
 - [x] Dev stack deployed: `https://ckcflhkgzt3p6lsxad5uvxom740fkwbr.lambda-url.eu-central-1.on.aws/`
 - [x] `wscript` → `env.js` + `-DREVOLVER_DEV`; `index.js` uses `env.LAMBDA_URL`, Clay link `{{AUTH_URL}}`; "DEV" tag on watch.
-- [x] `auth/index.html`: `LAMBDA_URLS` allowlist, `?env=dev` via `sessionStorage`, DEV banner. Also accepts the Keycloak origin (migration #2 step 2).
+- [x] ~~`auth/index.html`: `?env=dev` switching~~ — merged (#1), then **reverted** (#2) while prod webview login was broken. Cause turned out to be Volvo: the old login URL now forwards to the Keycloak login page, which renders blank in the Pebble Android webview (see #4).
+- [x] Replaced by **separate deployments**: prod page from the `ReVolverAuth` repo (`deploy-auth.yml`, `main`), dev page from a separate `ReVolverAuth-dev` repo (`deploy-auth-dev.yml`, any other branch, dev Lambda URL substituted at deploy). `auth/index.html` accepts both login origins (`volvoid.eu`, `auth.volvocars.com`).
+- [ ] Create the `ReVolverAuth-dev` repo with GitHub Pages, and add the deploy key (secret `REVOLVERAUTH_DEV_DEPLOY_KEY`).
+- [ ] Dev Volvo app: add redirect URI `https://piotrserafin.github.io/ReVolverAuth-dev/`; set `/revolver-dev/redirect-uri` to it.
 - [ ] Dev Volvo app + `/revolver-dev/*` SSM params (extended scopes).
 - [ ] Merge to `main` → auth page live (dev login needs it); infra deploy is a no-op for prod.
 - [ ] End-to-end: dev build → login → commands.
@@ -268,7 +271,7 @@ Develop and test against **dev credentials** (a separate Volvo application: clie
 ```
               dev build (REVOLVER_ENV=dev)          prod build (default)
 PebbleKit JS  LAMBDA_URL = dev Function URL         LAMBDA_URL = prod Function URL
-Auth page     ReVolverAuth/?env=dev                 ReVolverAuth/
+Auth page     ReVolverAuth-dev/                     ReVolverAuth/
 Lambda        ReVolverAuthStack-dev                 ReVolverAuthStack (unchanged)
 SSM           /revolver-dev/*                       /revolver/* (unchanged)
 Volvo app     "ReVolver Dev" (unpublished)          "ReVolver" (published)
@@ -281,7 +284,7 @@ Volvo app     "ReVolver Dev" (unpublished)          "ReVolver" (published)
 | SSM prefix for dev | `/revolver-dev` | Not `/revolver/dev`: prod's IAM policy grants `parameter/revolver/*`, so prod would be able to read dev secrets. A separate prefix also needs no prod migration. |
 | Stage selection (infra) | CDK context: `cdk deploy -c stage=dev` | One stack class, two stacks; the prod stack name and Function URL stay the same. |
 | Stage selection (watch app) | **Build time**: `REVOLVER_ENV=dev pebble build` | The dev URL never ships in a release `.pbw`, and nobody can switch to dev by accident. A runtime Clay toggle was rejected for that reason. |
-| Auth frontend | One site, `?env=dev` selects the Lambda from a **hardcoded allowlist** of 2 URLs | No second GitHub Pages site. The allowlist prevents `?lambda=<attacker url>` style injection. |
+| Auth frontend | Separate repo `ReVolverAuth-dev` (own GitHub Pages site and deploy key), deployed by its own workflow from any branch | Prod page only changes on `main`. (The first approach, `?env=dev` switching in one page, was reverted: an experiment on the shared page put prod at risk.) |
 | Volvo app for dev | Separate, **unpublished** application | Unpublished apps work for the owner's own account: ideal for dev. Own client ID, secret, API key and redirect URI. |
 
 ### Changes
@@ -297,17 +300,16 @@ Volvo app     "ReVolver Dev" (unpublished)          "ReVolver" (published)
 
 **SSM (manual, dev only)**
 - `/revolver-dev/client-id`, `client-secret`, `vcc-api-key` (SecureString) from the dev Volvo app.
-- `/revolver-dev/redirect-uri` (the dev app's registered redirect URI), `allowed-origins` (`https://piotrserafin.github.io`), `scopes` (**required**: the auth page rejects a config without it). Dev uses an **extended scope list**: prod scopes + `location:read` (see `doc/scopes.md`); every scope must also be enabled on the dev Volvo app, or authorize fails with `invalid_scope`. `offline_access` only with Keycloak endpoints. Plus `auth-endpoint`/`token-endpoint` if they differ from the defaults (e.g. Keycloak while prod is still legacy).
+- `/revolver-dev/redirect-uri` (the dev app's registered redirect URI), `allowed-origins` (`https://piotrserafin.github.io,https://piotrserafin.dev`; Pages redirects to the `.dev` custom domain), `scopes` (**required**: the auth page rejects a config without it). Dev uses an **extended scope list**: prod scopes + `location:read` (see `doc/scopes.md`); every scope must also be enabled on the dev Volvo app, or authorize fails with `invalid_scope`. `offline_access` only with Keycloak endpoints. Plus `auth-endpoint`/`token-endpoint` if they differ from the defaults (e.g. Keycloak while prod is still legacy).
 
 **Auth frontend (`auth/index.html`, deployed to the ReVolverAuth repo)**
-- Replace the hardcoded `var LAMBDA_URL` (line 21) with `var LAMBDA_URLS = { prod: '<prod url>', dev: '<dev url>' };`. The page fetches its OAuth config (`client_id`, `redirect_uri`, `scopes`, `auth_endpoint`) from this URL, so picking the dev Lambda also picks the dev Volvo app.
-- On first load, read `?env=` (only `dev` or `prod`; anything else → prod) and save it in `sessionStorage`. On the Volvo redirect back (`?code=…`), read it from `sessionStorage`. The query string is lost on the redirect, and the page is same-origin so `sessionStorage` survives.
-- Show a visible "DEV" banner when `env=dev`.
+- One source (`auth/`), two deployments. `deploy-auth-dev.yml` copies it to the `ReVolverAuth-dev` repo and rewrites `var LAMBDA_URL` to the dev Lambda (the page fetches its OAuth config from it, so this also picks the dev Volvo app). It adds `[DEV]` markers and `noindex`, and writes `version.txt`.
+- `deploy-auth.yml` (prod) is unchanged; the two sites share nothing but the source.
 
 **PebbleKit JS (`src/pkjs/`)**
 - `wscript`: before the build, generate `src/pkjs/env.js` from `os.environ.get('REVOLVER_ENV', 'prod')`:
   ```js
-  module.exports = { ENV: 'dev', LAMBDA_URL: '…', AUTH_URL: 'https://piotrserafin.github.io/ReVolverAuth/?env=dev' };
+  module.exports = { ENV: 'dev', LAMBDA_URL: '…', AUTH_URL: 'https://piotrserafin.github.io/ReVolverAuth-dev/' };
   ```
 - `index.js`: `var env = require('./env');` replaces the hardcoded `LAMBDA_URL`. `config.json` login link → `env.AUTH_URL`: Clay config is static JSON, so either patch the link in JS before `clay.generateUrl()`, or generate the link item in code.
 - `.gitignore`: `src/pkjs/env.js`. A default prod `env.js` is generated if the variable is unset, so a plain `pebble build` = prod.
@@ -328,7 +330,7 @@ aws ssm put-parameter --name /revolver-dev/client-id ... --type SecureString   #
 
 # daily dev
 REVOLVER_ENV=dev pebble build && pebble install --emulator basalt --vnc
-# log in via Clay → ReVolverAuth/?env=dev → dev Volvo app → dev Lambda
+# log in via Clay → ReVolverAuth-dev/ → dev Volvo app → dev Lambda
 
 # release
 pebble clean && pebble build                # prod (default)
