@@ -164,6 +164,26 @@
     }
     reach('auth.volvocars.com (new login)', 'https://auth.volvocars.com/realms/volvocars/.well-known/openid-configuration');
     reach('volvoid.eu.volvocars.com (old login)', 'https://volvoid.eu.volvocars.com/.well-known/openid-configuration');
+    reach('api.volvocars.com (Volvo API)', 'https://api.volvocars.com/');
+    reach('www.volvocars.com', 'https://www.volvocars.com/favicon.ico');
+    reach('Lambda prod', 'https://tpl5qhrn75bxzps77pdqllhxuy0mckgw.lambda-url.eu-central-1.on.aws/');
+    reach('Lambda dev', 'https://ckcflhkgzt3p6lsxad5uvxom740fkwbr.lambda-url.eu-central-1.on.aws/');
+    reach('piotrserafin.github.io (same site)', 'https://piotrserafin.github.io/ReVolverAuth/style.css');
+    reach('www.google.com', 'https://www.google.com/favicon.ico');
+    reach('example.com', 'https://example.com/');
+    reach('cdnjs.cloudflare.com', 'https://cdnjs.cloudflare.com/');
+
+    // Image load: a different request path than fetch (like a normal page load)
+    function reachImg(label, url) {
+      var cell = row('net', label, 'checking...', 'pending');
+      var img = new Image();
+      var t0 = Date.now();
+      img.onload = function () { cell.textContent = 'loaded (' + (Date.now() - t0) + ' ms)'; cell.className = 'ok'; };
+      img.onerror = function () { cell.textContent = 'error (blocked, or not an image)'; cell.className = 'bad'; };
+      img.src = url + (url.indexOf('?') === -1 ? '?' : '&') + 'diag=' + t0;
+    }
+    reachImg('Image: www.google.com favicon', 'https://www.google.com/favicon.ico');
+    reachImg('Image: www.volvocars.com favicon', 'https://www.volvocars.com/favicon.ico');
     row('net', 'navigator.onLine', String(navigator.onLine));
 
     // --- Errors ---
