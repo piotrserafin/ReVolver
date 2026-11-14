@@ -110,6 +110,19 @@
     check('js', 'crypto.subtle', function () { return window.crypto && window.crypto.subtle; });
     check('js', 'crypto.randomUUID', function () { return window.crypto && typeof window.crypto.randomUUID === 'function'; });
     check('js', 'WebAuthn (PublicKeyCredential)', function () { return typeof window.PublicKeyCredential === 'function'; });
+    // The Pebble app's settings-webview guard (realm_guard.js) deletes customElements; Volvo's login
+    // page calls customElements.get() on load and goes blank without it.
+    check('js', 'customElements (custom HTML tags)', function () {
+      return window.customElements && typeof window.customElements.get === 'function';
+    });
+
+    // APIs realm_guard.js removes: anything listed here means the app's guard is active on this page
+    var guarded = ['customElements', 'RTCPeerConnection', 'Worker', 'SharedWorker', 'WebTransport'];
+    var missing = [];
+    for (var gi = 0; gi < guarded.length; gi++) {
+      if (typeof window[guarded[gi]] === 'undefined') missing.push(guarded[gi]);
+    }
+    row('js', 'APIs removed by app guard', missing.length ? missing.join(', ') : 'none', missing.length ? 'bad' : 'ok');
 
     // Dynamic import: real module execution test
     var modCell = row('js', 'Module script actually runs', 'checking...', 'pending');
