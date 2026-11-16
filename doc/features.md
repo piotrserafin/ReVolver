@@ -7,6 +7,7 @@ Planned features, one section each. Status: `planned` → `in progress` → `don
 | 1 | [Quick Launch action](#1-quick-launch-action) | planned | User request |
 | 2 | [Volvo ID → Keycloak migration](#2-volvo-id--keycloak-migration) | planned | Volvo announcement — **deadline 2027-01-31** |
 | 3 | [Dev environment (dev credentials + endpoint)](#3-dev-environment) | in progress | Development need — **do before #2** |
+| 4 | [Browser login with pairing](#4-browser-login-with-pairing) | in progress | Volvo login page blank in the Pebble settings webview — **blocks all logins** |
 
 ---
 
@@ -354,8 +355,64 @@ pebble clean && pebble build                # prod (default)
 
 ---
 
-## 4. _Next feature_
+## 4. Browser login with pairing
 
-**Status:** planned
+**Status:** in progress (`feature/browser-pairing`; works end-to-end on dev, 2026-11-16)
 
-_TBD_
+### Problem
+
+Volvo's Keycloak login page renders blank in the Core Devices Pebble app's settings webview (Android), so nobody can log in. The old `volvoid.eu` login URL now forwards to the same page, so prod is affected too.
+
+Root cause (confirmed 2026-11-14): the settings webview injects `realm_guard.js` (commit [f5f688fe16](https://github.com/coredevices/mobileapp/commit/f5f688fe16cf40befd5a3e13ad6016caf88548eb)), which deletes `window.customElements`. Volvo's login bundle calls `window.customElements.get('track-event')` at module load (analytics), throws, and React unmounts. It was reproduced in desktop Chrome by injecting the guard, and the diagnostics page shows `customElements` missing on the device. Reported upstream with a suggested fix (an inert registry instead of deleting it). We can't change either side, so we log in outside the webview.
+
+Related, also needed: `pebble.usesPermissions` in `package.json` (declared domains). Without it the webview blocks every host silently.
+
+### Flow
+
+```
+Settings open → PKJS: POST action=pair_start → {code, secret}; secret stays in PKJS (localStorage)
+             → Clay link = AUTH_URL?pair=<code>; PKJS polls every 3 s
+Webview      → auth page sees ?pair + Pebble.openUrl → "Log in with Volvo ID in browser"
+             → Pebble.openUrl(AUTH_URL?pair=<code>) → phone browser
+Browser      → pair saved in sessionStorage → Volvo login (PKCE) → back with ?code
+             → POST exchange + pair → Lambda stores tokens on the pairing, returns {ok:true}
+             → "Connected. Go back to the Pebble app."
+PKJS poll    → POST action=pair_poll(code, secret) → 202 pending … → 200 tokens (item deleted)
+             → saveAuth → sendStatus → watch "Logged in!" + "Ready"
+```
+
+The in-webview login stays as a fallback ("Log in here instead"), so it works again once the Pebble app is fixed. If `pair_start` fails, the settings page opens without `?pair` (old flow).
+
+### Changes
+
+| Component | Change |
+|-----------|--------|
+| CDK | DynamoDB table `<stack>-pairing` (on-demand, TTL attribute `ttl`, `DESTROY`); Lambda gets Put/Get/Update/DeleteItem on it, plus env `PAIRING_TABLE`. **Prod template changes too** (new table), so merging deploys it. |
+| Lambda | `action=pair_start` → random `code` (16 B) + `secret` (32 B); stores `sha256(secret)` and `ttl` = now + 10 min. Exchange with `pair` → tokens go onto the item (conditional: exists, not used, not expired) → `{ok:true}`; 410 if expired or used. `action=pair_poll` → 404 (unknown, wrong secret or expired all look the same), 202 pending, 200 tokens via a conditional delete (delivered once). |
+| Auth page | `?pair` in the webview → "in browser" button (`Pebble.openUrl`) + fallback link. `?pair` in the browser → kept in sessionStorage through the Volvo round trip, sent with the exchange, then a "go back to Pebble" screen. Without `?pair`: unchanged. |
+| PKJS | Clay rebuilt on every settings open (fresh code in the link). `pair_start` → `openURL` → poll every 3 s until 200/404/expiry. Polling resumes on `ready`. `saveAuth()` is shared with the webview payload path. |
+
+### Security
+
+- Tokens never reach the browser. They wait at most 10 min in DynamoDB (encrypted at rest), are handed out once, then deleted.
+- The `code` travels through the browser (URL, history); the `secret` never leaves PKJS and is stored only as a hash.
+- Known gap: someone who learns a live `code` could attach *their* Volvo account to the pairing (login CSRF). Low risk (128-bit code, 10 min). Fix later if needed: show a short confirmation code on the watch and the browser.
+- No rate limit on `pair_start`; TTL cleans up. DynamoDB TTL deletes lazily, so expiry is also checked in code.
+
+### Risks / open questions
+
+- `Pebble.openURL` is now called after an async request (`pair_start`, ~6 s on a Lambda cold start). Check that the Pebble app still opens settings, and that the delay is acceptable.
+- Does PKJS keep running (polling) while the browser is in front? If not, polling resumes on `ready` within the 10-min window.
+- Does Akamai accept the login in the phone browser? Yes: Chrome already worked before this feature.
+- Polling while settings are open only to change the VIN: up to 200 small requests per open. Fine for a PoC; add backoff if it matters.
+
+### Testing
+
+- [x] Lambda pairing logic: local test with a fake DynamoDB (18 checks: pending, wrong secret, single delivery, expiry, 410, plain exchange unchanged, origin check).
+- [x] PKJS: node simulation (pair link, polling, token save, `+Logged in!`, 404 stop, fallback, resume on `ready`).
+- [x] Auth page: headless Chrome with mocked Lambda and `Pebble` (webview button, `openUrl`, sessionStorage round trip, done screen, 410, no-pair unchanged).
+- [x] `cdk synth -c stage=dev`: table, grant, env var.
+- [x] `cdk deploy -c stage=dev`.
+- [x] Push the branch → dev auth page.
+- [x] Phone, dev build: settings → browser → Volvo login → watch "Logged in!" (Pixel 8, Android 17 DP11).
+- [ ] Then: prod merge (deploys Lambda + table + auth page), release `v1.1.1` with `usesPermissions`.

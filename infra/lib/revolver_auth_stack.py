@@ -2,6 +2,8 @@ from aws_cdk import (
     Stack,
     Duration,
     CfnOutput,
+    RemovalPolicy,
+    aws_dynamodb as dynamodb,
     aws_lambda as lambda_,
     aws_iam as iam,
     aws_ssm as ssm,
@@ -73,6 +75,20 @@ class ReVolverAuthStack(Stack):
             },
         )
 
+        # Browser-login pairing. Items live 10 min; nothing
+        # worth keeping, so the table goes with the stack.
+        pairing_table = dynamodb.Table(
+            self,
+            "PairingTable",
+            table_name=f"{stack.stack_name}-pairing",
+            partition_key=dynamodb.Attribute(
+                name="code", type=dynamodb.AttributeType.STRING
+            ),
+            billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
+            time_to_live_attribute="ttl",
+            removal_policy=RemovalPolicy.DESTROY,
+        )
+
         # Token exchange Lambda
         token_function = lambda_.Function(
             self,
@@ -89,7 +105,16 @@ class ReVolverAuthStack(Stack):
             environment={
                 # Only the SSM prefix — no secrets in env vars or CloudFormation
                 "SSM_PREFIX": ssm_prefix,
+                "PAIRING_TABLE": pairing_table.table_name,
             },
+        )
+
+        pairing_table.grant(
+            lambda_role,
+            "dynamodb:PutItem",
+            "dynamodb:GetItem",
+            "dynamodb:UpdateItem",
+            "dynamodb:DeleteItem",
         )
 
         # Function URL (CORS handled by Lambda for dynamic origin matching)
