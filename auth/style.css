@@ -77,6 +77,7 @@ body {
 .page-auth .error { margin: 24px auto; }
 .page-auth .guide-link { display: block; margin-top: 32px; font-size: 12px; color: var(--fg-dim); }
 .page-auth .guide-link a { color: var(--accent); }
+.page-auth .alt-login { display: block; margin-top: 16px; font-size: 13px; color: var(--accent); }
 
 /* Spinner */
 .spinner {

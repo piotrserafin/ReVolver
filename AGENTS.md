@@ -30,14 +30,17 @@ If you need more information on the `pebble` command or a sub-command, append `-
 Build-time switch. A plain `pebble build` is always prod; the dev URL never ships in a release `.pbw`.
 
 ```bash
-REVOLVER_ENV=dev pebble build            # dev Lambda + auth page ?env=dev + "DEV" tag on watch
+REVOLVER_ENV=dev pebble build            # dev Lambda + auth page /dev/ + "DEV" tag on watch
 pebble build                             # prod (default; CI release builds this)
 cdk deploy -c stage=dev                  # dev stack (manual only; CI deploys prod)
 ```
 
 - `wscript` generates `src/pkjs/env.js` (gitignored) with `ENV`, `LAMBDA_URL`, `AUTH_URL`, and adds `-DREVOLVER_DEV` for C in dev builds. URLs live in `ENVIRONMENTS` in `wscript`.
 - `src/pkjs/config.json` has a `{{AUTH_URL}}` placeholder in the login link; `index.js` fills it from `env.js` before creating Clay.
-- Auth page: `?env=dev` selects the dev Lambda from a fixed allowlist (`LAMBDA_URLS` in `auth/index.html`), kept in `sessionStorage` across the Volvo redirect, with a DEV banner.
+- Auth page: two separate deployments of `auth/` to the ReVolverAuth repo.
+  - Prod (`ReVolverAuth` repo → `ReVolverAuth/`): `deploy-auth.yml`, on push to `main`.
+  - Dev (`ReVolverAuth-dev` repo → `ReVolverAuth-dev/`): `deploy-auth-dev.yml`, on push to **any other branch** that changes `auth/**` (or manual run once the workflow is on `main`). Rewrites `LAMBDA_URL` to the dev Lambda, adds `[DEV]` markers and `noindex`, writes `version.txt` (branch@sha). Deploy key secret: `REVOLVERAUTH_DEV_DEPLOY_KEY`.
+  - Test auth page changes on a branch first: they reach dev without affecting prod users.
 - Switching env: sideloading clears PebbleKit JS localStorage, so log in again after switching.
 - Dev stack setup: `infra/lambda/README.md` → "Dev Stack".
 
@@ -210,7 +213,7 @@ Dev stack uses the same names under `/revolver-dev/*` (own Volvo app, extended `
 - Volvo API: `https://api.volvocars.com/connected-vehicle/v2`
 - Lambda (prod): `https://tpl5qhrn75bxzps77pdqllhxuy0mckgw.lambda-url.eu-central-1.on.aws/`
 - Lambda (dev): `https://ckcflhkgzt3p6lsxad5uvxom740fkwbr.lambda-url.eu-central-1.on.aws/`
-- Auth frontend (dev): `https://piotrserafin.github.io/ReVolverAuth/?env=dev`
+- Auth frontend (dev): `https://piotrserafin.github.io/ReVolverAuth-dev/` (deployed version: `version.txt`)
 
 ## Volvo Connected Vehicle API
 
@@ -244,10 +247,13 @@ See `doc/api.md` for full endpoint reference. The complete Connected Vehicle API
 - Sideloading clears PebbleKit JS localStorage — requires re-login during development
 - Volvo access tokens last ~5 min; refresh threshold is 60s before expiry
 - Investigating: occasional re-login needed after ~1h idle (diagnostic logs in place)
+- **Network domains must be declared** in `package.json` → `pebble.usesPermissions` (`Internet` + `domains`, each covering its subdomains). The Core Devices Pebble app treats `manifestVersion >= 2` apps (SDK 4.44 builds) as permission-declaring: PebbleKit JS and the settings webview may only reach declared/approved domains. The settings webview never prompts; undeclared hosts get a silent 403 (blank Volvo login page, `Failed to fetch`). Adding a new host (new Lambda URL, auth page domain, Volvo host) means adding it here and releasing a new version. Diagnose with `ReVolverAuth-dev/diag.html` (linked as "Diagnostics" in the auth page footer).
 
 ## Configuration
 
 Watchapp (not watchface): `"watchface": false` in `package.json`.
+
+Declared permissions (`pebble.usesPermissions`): `Internet` for `volvocars.com`, `piotrserafin.github.io`, `piotrserafin.dev`, and the prod + dev Lambda hosts. The SDK copies this into `appinfo.json` as-is; it can't vary per `REVOLVER_ENV`, so both Lambda hosts are always listed.
 
 ## SDK Documentation
 

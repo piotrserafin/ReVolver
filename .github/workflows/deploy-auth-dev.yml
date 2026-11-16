@@ -1,0 +1,72 @@
+name: Deploy Auth Frontend (dev)
+
+# Deploys auth/ from any branch to the separate ReVolverAuth-dev repo (GitHub Pages:
+# https://piotrserafin.github.io/ReVolverAuth-dev/). The prod ReVolverAuth repo is never touched.
+# - Automatically on push to a non-main branch that changes auth/**
+# - Manually: Actions → "Deploy Auth Frontend (dev)" → Run workflow → pick the branch
+on:
+  push:
+    branches-ignore: [main]
+    paths: ['auth/**', '.github/workflows/deploy-auth-dev.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One dev deploy at a time (later pushes wait, then win)
+concurrency:
+  group: revolverauth-dev-pages
+  cancel-in-progress: false
+
+env:
+  DEV_LAMBDA_URL: https://ckcflhkgzt3p6lsxad5uvxom740fkwbr.lambda-url.eu-central-1.on.aws/
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout ReVolver
+        uses: actions/checkout@v6
+
+      - name: Checkout ReVolverAuth-dev
+        uses: actions/checkout@v6
+        with:
+          repository: piotrserafin/ReVolverAuth-dev
+          ssh-key: ${{ secrets.REVOLVERAUTH_DEV_DEPLOY_KEY }}
+          path: target
+
+      - name: Build dev page
+        run: |
+          # Replace everything except .git
+          cd target
+          ls -A | grep -v '^.git$' | xargs -r rm -rf
+          cp ../auth/* .
+
+          # Point the page at the dev Lambda; fail if the line is missing
+          sed -i -E "s#^(\s*var LAMBDA_URL = )'[^']*';#\1'${DEV_LAMBDA_URL}';#" index.html
+          grep -q "var LAMBDA_URL = '${DEV_LAMBDA_URL}';" index.html \
+            || { echo "::error::LAMBDA_URL line not found in auth/index.html"; exit 1; }
+
+          # Visible DEV marker on every page
+          sed -i -E 's#<title>([^<]*)</title>#<title>[DEV] \1</title>#' *.html
+          sed -i 's#<div class="logo">ReVolver</div>#<div class="logo">ReVolver <span style="color:var(--warn)">DEV</span></div>#' index.html
+
+          # Keep dev out of search engines
+          sed -i 's#<head>#<head>\n  <meta name="robots" content="noindex">#' *.html
+
+          # Record what is deployed
+          echo "${GITHUB_REF_NAME}@${GITHUB_SHA::7} $(date -u +%FT%TZ)" > version.txt
+
+      - name: Push changes
+        working-directory: target
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to push"
+          else
+            git commit -m "sync(dev): ${GITHUB_REF_NAME}@${GITHUB_SHA::7}"
+            git push
+          fi
