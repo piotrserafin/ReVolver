@@ -38,9 +38,9 @@ import urllib.request
 import urllib.parse
 import urllib.error
 
-DEFAULT_TOKEN_ENDPOINT = "https://volvoid.eu.volvocars.com/as/token.oauth2"
+DEFAULT_TOKEN_ENDPOINT = "https://auth.volvocars.com/realms/volvocars/protocol/openid-connect/token"
 DEFAULT_ALLOWED_ORIGINS = "https://piotrserafin.github.io,https://piotrserafin.dev"
-DEFAULT_AUTH_ENDPOINT = "https://volvoid.eu.volvocars.com/as/authorization.oauth2"
+DEFAULT_AUTH_ENDPOINT = "https://auth.volvocars.com/realms/volvocars/protocol/openid-connect/auth"
 
 PAIR_TTL_SECONDS = 600
 PAIR_CODE_RE = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
