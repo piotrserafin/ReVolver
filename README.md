@@ -142,6 +142,10 @@ Keep ReVolver open on the watch while logging in. "Log in here instead" uses the
 - No secrets in source code or app binary
 - See [PRIVACY.md](PRIVACY.md) for full details
 
+## Support
+
+ReVolver is free and made in my spare time. If it makes your mornings a bit warmer, you can [buy me a coffee on Ko-fi](https://ko-fi.com/bartebly) ☕
+
 ## License
 
 MIT
