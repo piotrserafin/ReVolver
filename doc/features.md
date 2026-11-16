@@ -8,6 +8,7 @@ Planned features, one section each. Status: `planned` → `in progress` → `don
 | 2 | [Volvo ID → Keycloak migration](#2-volvo-id--keycloak-migration) | done (2026-11-17) | Volvo announcement — **deadline 2027-01-31**; old-app cleanup after the deadline |
 | 3 | [Dev environment (dev credentials + endpoint)](#3-dev-environment) | done | Development need |
 | 4 | [Browser login with pairing](#4-browser-login-with-pairing) | done (v1.2.0) | Volvo login page blank in the Pebble settings webview ([mobileapp#507](https://github.com/coredevices/mobileapp/issues/507)) |
+| 5 | [Find my car](#5-find-my-car) | planned | User request — needs `location:read` (prod has it since #2) |
 
 ---
 
@@ -298,3 +299,81 @@ The in-webview login stays as a fallback ("Log in here instead"), so it works ag
 - [x] Prod merge (PR #3). The merge push event was lost during a GitHub incident; deployed with manual `workflow_dispatch` runs.
 - [x] Phone, prod build: browser login works.
 - [x] Released `v1.2.0` (with `usesPermissions`), GitHub + Pebble app store.
+
+---
+
+## 5. Find my car
+
+**Status:** planned. Unblocked: prod has `location:read` since the #2 switch (2026-11-17).
+
+### Goal
+
+From the watch, find where the car is parked: distance and direction from where you're standing, with an arrow on watches that have a compass. Optionally hand off to walking navigation on the phone.
+
+### Findings (2026-11-16)
+
+| Question | Answer |
+|---|---|
+| Volvo Location API | `GET https://api.volvocars.com/location/v1/vehicles/{vin}/location` → GeoJSON Feature: `data.geometry.coordinates = [lon, lat, alt]`, `data.properties` a string map (timestamp and heading expected; verify on a real car). Needs scope `location:read` (dev and prod have it). |
+| Phone location | PebbleKit JS `navigator.geolocation` (`getCurrentPosition`, `watchPosition`, `clearWatch`); options `maximumAge`, `timeout`, `enableHighAccuracy`. The Core Devices Pebble app checks a **`Location`** permission (`GeolocationInterface.kt`) and asks the user; declare it in `usesPermissions`. |
+| Watch compass | C `CompassService`: `compass_service_subscribe`, `compass_service_set_heading_filter`, status `CompassStatusDataInvalid` (calibrating, unusable) → `Calibrating` → `Calibrated`. Not all watches have one: guard with `PBL_COMPASS`. The SDK hardware table is unreadable in the docs; check `PBL_COMPASS` per platform when building. While calibrating, show "Move your wrist". Charging deletes the calibration. |
+| Pebble app "plugins" | A preview in the new Pebble app: phone-side JS with sources (weather, calendar, …) and actions. No navigation/maps plugin, and a watchapp can't use them. **Not a fit.** |
+| Open phone navigation | Not documented for watchapps. `Pebble.openURL` in PebbleKit JS only loads the settings webview (`PKJSInterface.kt` → `jsRunner.loadUrl`). `Pebble.openUrl` (system browser) exists on settings pages only. |
+| Timeline pins | No location field and no way to open maps. Not useful here. |
+
+### Flow
+
+```
+SELECT → ActionMenu → "Find car"
+  Watch → JS   COMMAND "find:start"
+  JS           GET car location (once per open) + watchPosition (phone GPS)
+  JS           haversine distance + initial bearing → FIND_CAR to watch (~every 2 s, only on change)
+  Watch        "Find car" window:
+                 - arrow pointing at the car (compass) or direction text "NE"
+                 - distance "350 m" / "1.2 km", "car seen 5 min ago"
+                 - "Move your wrist" while the compass calibrates
+  BACK → JS    COMMAND "find:stop" → clearWatch
+```
+
+### Phases
+
+1. **Distance + direction text, every watch.** Car location, phone GPS, distance, 8-point direction (N, NE, …), age of the car's position. No compass needed; this is the main value.
+2. **Compass arrow** on watches with `PBL_COMPASS`: arrow angle = bearing − heading, `GPath` arrow, heading filter ~5°. Others stay on phase 1.
+3. **Navigate on the phone (spike):** a "Navigate to car" button on the settings page calling `Pebble.openUrl("https://www.google.com/maps/dir/?api=1&destination=<lat>,<lon>&travelmode=walking")` (Android opens Maps). Check whether `Pebble.openUrl` works on the Clay page; otherwise a small page on the auth site.
+
+### Changes
+
+| Component | Change |
+|---|---|
+| `package.json` | `usesPermissions` + `{"name": "Location", "reason": "Show the way to your parked car", "required": false}`. Message key `FIND_CAR` (JS → watch, string). |
+| Command bit | `CMD_FIND_CAR (1 << 9)` / `0x200`, set when the Location API answers (403 → no scope → hidden). |
+| PebbleKit JS | `findCarStart()` / `findCarStop()`: car location (`/location/v1/...`, same auth headers as other calls), `watchPosition`, haversine + bearing, `FIND_CAR = "dist_m\|bearing_deg\|age_s\|accuracy_m"` (or an error text). Stop GPS on `find:stop` and when the app closes. |
+| Watch (C) | New `src/c/windows/find_window.c`: arrow, distance, age, hints. `CompassService` only under `#if PBL_COMPASS`. ActionMenu entry "Find car". Sends `find:start` / `find:stop`. |
+| Lambda / backend | None. Car and phone locations stay on the phone. |
+| SSM / Volvo app | Done: `location:read` is in `/revolver/scopes` and the prod application (#2). |
+| Docs | `PRIVACY.md`: locations used only on the phone, never sent to the server. `README.md` features. `AGENTS.md` message keys / bits. |
+
+### Edge cases
+
+| Case | Behavior |
+|---|---|
+| Location permission denied | "Allow location for ReVolver in the Pebble app" |
+| Token without `location:read` (logged in before the scope existed) | "Find car" hidden; appears after re-login |
+| Car driving (`command-accessibility` = `UNAVAILABLE`) | "Car is driving" instead of a stale arrow |
+| Car position old (> 1 h) | Age shown prominently |
+| GPS accuracy ≥ distance (car within ~30 m) | "You're close", no arrow |
+| No compass / not calibrated | Direction text (phase 1) |
+| No GPS fix within timeout | "Waiting for GPS…", keep trying while the window is open |
+
+### Testing
+
+- Emulator: `pebble emu-compass` for heading; mock car + phone positions in JS for dev builds.
+- Phone (dev build): walk away from the car, check distance and arrow, then deny the permission and check the hint.
+- Verify the real `properties` (timestamp, heading) on the car.
+- Battery: GPS and compass only while the window is open; check that `clearWatch` runs on BACK and on app exit.
+
+### Open questions
+
+- Which watches have a compass (`PBL_COMPASS` per platform)?
+- Does `Pebble.openUrl` work on the Clay settings page (phase 3)?
+- Show the car's heading (`properties`) too, e.g. "parked facing N"? Probably not worth the space.
