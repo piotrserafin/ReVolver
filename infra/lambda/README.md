@@ -119,7 +119,34 @@ refresh_token=<current_refresh_token>
 
 **Important:** Volvo rotates refresh tokens — each one is single-use. The old token is invalidated after a successful refresh.
 
-### 4. OPTIONS — CORS Preflight
+### 4. POST — Browser-Login Pairing
+
+The Core Devices Pebble app on Android injects a script into watchapp settings pages that deletes `window.customElements`. Volvo's login page calls `customElements.get()` while loading, crashes, and stays blank ([coredevices/mobileapp#507](https://github.com/coredevices/mobileapp/issues/507)). So the login runs in the phone's browser instead (opened with `Pebble.openUrl`), and the browser can't pass tokens back to PebbleKit JS. The Lambda bridges the two with a pairing item in DynamoDB (`<stack>-pairing`, TTL 10 min): the browser leaves the tokens there, PebbleKit JS collects them with a secret only it holds.
+
+```
+PebbleKit JS ──action=pair_start──► Lambda ── {code, secret}       (sha256(secret) stored)
+Browser      ──authorization_code + pair=<code>──► Lambda ──► Volvo
+                                                   tokens stored on the item; browser gets {"ok": true}
+PebbleKit JS ──action=pair_poll + code + secret──► Lambda ── 202 pending | 200 tokens (item deleted)
+```
+
+**Input:** (application/x-www-form-urlencoded)
+
+```
+action=pair_start
+action=pair_poll&code=<code>&secret=<secret>
+grant_type=authorization_code&code=...&code_verifier=...&pair=<code>
+```
+
+**Output:**
+
+| Call | Response |
+|---|---|
+| `pair_start` | 200 `{"code", "secret", "expires_in": 600}` |
+| `pair_poll` | 202 `{"status": "pending"}`, 200 = same body as token exchange (once), 404 `{"error": "pair_not_found"}` (unknown, wrong secret or expired) |
+| exchange with `pair` | 200 `{"ok": true}`, 410 `{"error": "pair_expired"}` (expired or already used) |
+
+### 5. OPTIONS — CORS Preflight
 
 Responds to browser CORS preflight requests with appropriate headers.
 
@@ -427,6 +454,8 @@ aws ssm put-parameter --name /revolver-dev/token-endpoint --type String --value 
 | Missing verifier       | 400 `{"error": "missing_code_verifier"}`                   |
 | Missing refresh_token  | 400 `{"error": "missing_refresh_token"}`                   |
 | Unsupported grant_type | 400 `{"error": "unsupported_grant_type"}`                  |
+| Malformed `pair`       | 400 `{"error": "invalid_pair"}`                            |
+| Pairing expired / used | 410 `{"error": "pair_expired"}` (exchange), 404 `{"error": "pair_not_found"}` (poll) |
 | Volvo returns error    | Volvo's status code + sanitized error (no raw body leaked) |
 | Volvo unreachable      | 502 `{"error": "network_error"}`                           |
 
@@ -442,6 +471,7 @@ aws ssm put-parameter --name /revolver-dev/token-endpoint --type String --value 
 | SSM access             | IAM scoped to `/revolver/*` (prod) or `/revolver-dev/*` (dev) parameters only |
 | KMS decryption         | Restricted to SSM service context with parameter ARN condition             |
 | Config caching         | SSM values cached after cold start (no per-request SSM calls)              |
+| Pairing tokens         | DynamoDB, encrypted at rest; max 10 min (checked in code, TTL cleans up); delivered once via conditional delete; only `sha256(secret)` stored; never returned to the browser |
 
 ## Cost
 
@@ -450,6 +480,7 @@ aws ssm put-parameter --name /revolver-dev/token-endpoint --type String --value 
 - Lambda: 1M free requests/month
 - Function URL: no additional cost
 - SSM Parameter Store: free for standard parameters
+- DynamoDB (pairing): on-demand, a few hundred requests per login, fractions of a cent
 - KMS: free for SSM default key (`aws/ssm`)
 
 ## Rotate Secrets

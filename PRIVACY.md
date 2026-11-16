@@ -16,8 +16,9 @@ This secret cannot be embedded in the app — a `.pbw` file is a simple zip
 archive and anyone could extract it.
 
 Instead, the secret is stored securely on a minimal AWS Lambda proxy. The proxy
-does one thing: it adds the secret to your login request and forwards it to
-Volvo. It does not store, log, or inspect your tokens.
+adds the secret to your login request and forwards it to Volvo. It does not log
+or inspect your tokens. During browser login it holds them briefly until your
+phone collects them (see below).
 
 ## What stays on your phone
 
@@ -28,12 +29,26 @@ Volvo. It does not store, log, or inspect your tokens.
 | VIN | Phone + watch |
 | Car status | Phone + watch |
 
-Tokens never touch a database. They pass through the Lambda in transit and are
-returned directly to your phone.
+Tokens are not kept on any server. When you log in inside the Pebble app's
+settings page, they pass through the Lambda in transit and go straight to your
+phone.
+
+**Browser login.** On Android, Volvo's login page doesn't work inside the Pebble
+app ([reported to the Pebble app developers](https://github.com/coredevices/mobileapp/issues/507)), so ReVolver opens it in your
+phone's browser. The browser can't hand the
+tokens back to the Pebble app directly, so the Lambda keeps them in an encrypted
+AWS DynamoDB table until the ReVolver app on your phone collects them, usually
+within seconds:
+
+- Deleted as soon as they're collected, and never kept longer than 10 minutes
+- Only the ReVolver app that started the login can collect them (it holds a
+  one-time secret that never leaves your phone)
+- The browser never receives your tokens
 
 ## What the Lambda proxy sees
 
-During login and token refresh, your tokens briefly pass through the proxy.
+During login and token refresh, your tokens briefly pass through the proxy
+(and, for browser login, wait for your phone as described above).
 This is the same architecture used by every third-party car app (Tesla,
 BMW, etc.) that requires a server-side secret.
 

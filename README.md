@@ -41,8 +41,8 @@ Pebble Watch ←BT→ Phone (PebbleKit JS) ←HTTPS→ Volvo Connected Vehicle A
                    AWS Lambda (OAuth token exchange)
 ```
 
-1. User authenticates once with Volvo ID (OAuth2 + PKCE)
-2. Tokens stored on phone, auto-refreshed when expired
+1. User authenticates once with Volvo ID (OAuth2 + PKCE), in the phone's browser
+2. Tokens reach the phone through a short-lived pairing (DynamoDB, up to 10 min), then are stored on the phone and auto-refreshed when expired
 3. Commands sent directly to Volvo API from phone JS
 4. Watch displays status and sends command requests over Bluetooth
 
@@ -55,7 +55,7 @@ src/c/windows/           Main window UI
 src/pkjs/index.js        Phone JS — API calls, token management, commands
 src/pkjs/config.json     Clay settings page (VIN input, vibration toggle)
 auth/                    OAuth frontend (synced to ReVolverAuth repo)
-infra/                   AWS CDK stack (Lambda token exchange)
+infra/                   AWS CDK stack (Lambda token exchange + DynamoDB pairing table)
   infra/lambda/          Lambda function code
   infra/lib/             CDK stack definition
 doc/                     Documentation
@@ -107,9 +107,11 @@ pebble install --phone <IP>
 
 1. Open ReVolver settings on phone (Pebble app → ReVolver → Settings)
 2. Enter your VIN
-3. Click "Log in with Volvo ID"
-4. Authenticate with your Volvo ID credentials
-5. Done — app shows "Ready"
+3. Tap "Log in with Volvo ID", then "Log in with Volvo ID in browser"
+4. Log in with your Volvo ID in the browser
+5. Go back to the Pebble app — the watch shows "Logged in!", then "Ready"
+
+Keep ReVolver open on the watch while logging in. "Log in here instead" uses the login inside the Pebble app, which currently shows a blank page on Android ([coredevices/mobileapp#507](https://github.com/coredevices/mobileapp/issues/507)).
 
 ## Usage
 
@@ -124,6 +126,7 @@ pebble install --phone <IP>
 | ------------------------------ | ---------------------------------------- |
 | [doc/api.md](doc/api.md)       | Volvo API endpoints and response formats |
 | [doc/scopes.md](doc/scopes.md) | Volvo OAuth scopes reference             |
+| [infra/lambda/README.md](infra/lambda/README.md) | Lambda API, deploy, dev stack |
 | [doc/connected-vehicle-c3-specification.json](doc/connected-vehicle-c3-specification.json) | Connected Vehicle API OpenAPI spec (v2)  |
 | [doc/energy-api-specification.json](doc/energy-api-specification.json) | Energy API OpenAPI spec (v2)             |
 
@@ -133,6 +136,7 @@ pebble install --phone <IP>
 - Volvo requires client_secret (not pure PKCE) — server-side proxy is mandatory
 - OAuth2 PKCE prevents authorization code interception
 - VCC API key delivered with tokens (not hardcoded in app)
+- Browser login: tokens wait for the phone in DynamoDB (encrypted, max 10 min, single use, only for the holder of a one-time secret); the browser never receives them
 - Lambda wrapped in try/catch to prevent secret leaks in CloudWatch
 - All communication over HTTPS
 - No secrets in source code or app binary
