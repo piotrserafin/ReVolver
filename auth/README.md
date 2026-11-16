@@ -38,7 +38,7 @@ https://piotrserafin.github.io/ReVolverAuth/
 - **PKCE (S256)** — prevents authorization code interception
 - **State parameter** — prevents CSRF attacks
 - **No secrets in frontend** — token exchange happens server-side (AWS Lambda)
-- **Tokens passed directly to Pebble** — nothing stored on the server
+- **Tokens passed directly to Pebble** — or, with browser login, held by the Lambda for at most 10 minutes (encrypted, single use) until PebbleKit JS collects them
 
 ## Lambda Config Contract
 
@@ -48,7 +48,7 @@ The frontend fetches all OAuth config from the Lambda via `GET`. Expected respon
 {
   "client_id": "your-volvo-app-client-id",
   "redirect_uri": "https://piotrserafin.github.io/ReVolverAuth/",
-  "auth_endpoint": "https://volvoid.eu.volvocars.com/as/authorization.oauth2",
+  "auth_endpoint": "https://auth.volvocars.com/realms/volvocars/protocol/openid-connect/auth",
   "scopes": "openid conve:lock conve:unlock ..."
 }
 ```

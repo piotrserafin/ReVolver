@@ -5,7 +5,7 @@ Planned features, one section each. Status: `planned` → `in progress` → `don
 | # | Feature | Status | Source |
 |---|---------|--------|--------|
 | 1 | [Quick Launch action](#1-quick-launch-action) | planned | User request |
-| 2 | [Volvo ID → Keycloak migration](#2-volvo-id--keycloak-migration) | planned | Volvo announcement — **deadline 2027-01-31** |
+| 2 | [Volvo ID → Keycloak migration](#2-volvo-id--keycloak-migration) | in progress | Volvo announcement — **deadline 2027-01-31** |
 | 3 | [Dev environment (dev credentials + endpoint)](#3-dev-environment) | in progress | Development need — **do before #2** |
 | 4 | [Browser login with pairing](#4-browser-login-with-pairing) | in progress | Volvo login page blank in the Pebble settings webview — **blocks all logins** |
 
@@ -117,12 +117,12 @@ Values reuse the existing `COMMAND` string format, so the JS command path stays 
 
 ## 2. Volvo ID → Keycloak migration
 
-**Status:** planned
+**Status:** in progress (`feature/volvo_id_migration`). Prod switch waits for the overnight refresh-token check (see "Open questions").
 **Deadline:** 2027-01-31. After that date, OAuth clients with a `dc-` client ID stop working.
 
 ### Sources
 
-- Volvo announcement (2026-10-26): https://developer.volvocars.com/news/volvoid-migration/ (requires a developer portal login; not read directly, so verify against it)
+- Volvo announcement (2026-10-26): https://developer.volvocars.com/news/volvoid-migration/ (requires a developer portal login)
 - Community migration notes: [runsten#253](https://github.com/runsten-app/runsten/issues/253), [evcc#35845](https://github.com/evcc-io/evcc/pull/35845), [evcc#36007](https://github.com/evcc-io/evcc/issues/36007), [homey-com.volvocars#72](https://github.com/ricott/homey-com.volvocars/pull/72)
 
 ### What changes
@@ -133,114 +133,43 @@ Values reuse the existing `COMMAND` string format, so the JS command path stays 
 | Authorize | `https://volvoid.eu.volvocars.com/as/authorization.oauth2` | `https://auth.volvocars.com/realms/volvocars/protocol/openid-connect/auth` |
 | Token | `https://volvoid.eu.volvocars.com/as/token.oauth2` | `https://auth.volvocars.com/realms/volvocars/protocol/openid-connect/token` |
 | Client ID | `dc-…` | `vid-dc-…` (**new application** in the developer portal) |
-| Client secret | current | new |
-| `vcc-api-key` | current | new (one report says the old key keeps working with the new client; don't rely on it) |
-| Scopes | current `conve:*`, `openid`, `location:read` | same, plus **`offline_access`** |
+| Client secret, `vcc-api-key` | current | new |
+| Scopes | current | same. **No `offline_access`**: Keycloak rejects it with `invalid_scope` for `vid-dc-` clients (tested on dev, 2026-11-12). |
+| Redirect URI | — | Set when the app is created; **the portal can't edit it later**. Prod: `https://piotrserafin.github.io/ReVolverAuth/`. |
 | Existing tokens | — | **Cannot be migrated.** Every user logs in again once. |
 
-**Verified against the [discovery document](https://auth.volvocars.com/realms/volvocars/.well-known/openid-configuration) (2026-11-11):**
-- The authorize/token endpoints above are correct.
-- All 28 current scopes (`doc/scopes.md`, incl. `energy:state:read` and `energy:capability:read`) plus `offline_access` are in `scopes_supported` (re-checked 2026-11-12).
-- PKCE S256 and `client_secret_basic` (the Lambda's Basic auth) are supported.
-- Also available: `revocation_endpoint` (`…/protocol/openid-connect/revoke`), `device_authorization_endpoint`, CIBA (`…/ext/ciba/auth`), PAR (optional, `require_pushed_authorization_requests: false`).
-- `energy:*` scopes exist (`energy:battery_charge_level`, `energy:recharge_status`, `energy:electric_range`, `energy:charging_connection_status`, `energy:estimated_charging_time`, …).
-**Not affected:** claim renames (`firstname` → `given_name`, `client_id` → `azp`). ReVolver doesn't read the id_token.
+Verified against the [discovery document](https://auth.volvocars.com/realms/volvocars/.well-known/openid-configuration): endpoints above, all current scopes (incl. `energy:*`), PKCE S256 and `client_secret_basic` (the Lambda's Basic auth). Claim renames (`firstname` → `given_name`, `client_id` → `azp`) don't matter: ReVolver doesn't read the id_token.
 
-### Why `offline_access` matters
+### Current state (2026-11-16)
 
-Without it, Keycloak ties the refresh token to the SSO session, which lasts hours to days, so users would be logged out regularly. With it, the refresh token outlives the browser session. This may also fix the known issue "occasional re-login needed after ~1h idle"; verify after the migration.
+- **Dev** runs fully on Keycloak with its own `vid-dc-` app (`/revolver-dev/*`). Login (browser pairing, #4) and commands work.
+- **Prod** (v1.2.0) still uses the old client and endpoints. Volvo forwards the old authorize URL to the Keycloak login page, and the old token endpoint still accepts the code. Works until 2027-01-31.
+- **Auth page** already accepts both login origins (`ALLOWED_AUTH_ORIGINS` in `auth/index.html`).
+- **Lambda** defaults (`DEFAULT_AUTH_ENDPOINT`, `DEFAULT_TOKEN_ENDPOINT`) point at Keycloak. Prod sets both in SSM, so the defaults only matter if a parameter is missing.
+- **PebbleKit JS:** no change. Old refresh tokens fail with 400/401 after the switch; `refreshToken()` clears them, and the watch shows "Login needed".
 
-### Impact on ReVolver
+### Steps
 
-| Component | Change needed |
-|-----------|---------------|
-| **ReVolverAuth** (`auth/index.html` in this repo) | `ALLOWED_AUTH_ORIGIN = 'https://volvoid.eu.volvocars.com/'` is hardcoded (line 22, checked at line 119). **It blocks login** against the new endpoint. It must allow `https://auth.volvocars.com/` **before** the backend switches. Deployed by `.github/workflows/deploy-auth.yml` on push to `main` (`auth/**`), which syncs to the ReVolverAuth repo / GitHub Pages. |
-| **Lambda** (`token_exchange.py`) | Endpoints already come from SSM (`auth-endpoint`, `token-endpoint`), so the switch can be config-only. Update `DEFAULT_AUTH_ENDPOINT` / `DEFAULT_TOKEN_ENDPOINT` so the code doesn't fall back to dead URLs. Deployed by `.github/workflows/deploy-lambda.yml` (`cdk deploy --require-approval never`) on push to `main` (`infra/**`): **merging is the deploy**. |
-| **SSM** | New values: `client-id`, `client-secret`, `vcc-api-key`, `auth-endpoint`, `token-endpoint`, `scopes` (+ `offline_access`). `scopes` is effectively required: `auth/index.html` rejects a config without it. |
-| **PebbleKit JS** | No URL changes (it talks only to the Lambda). Old refresh tokens fail with 400 `invalid_grant` (or 401 `invalid_client`); `refreshToken()` **already clears the stored tokens on 400/401**, so the next launch shows "Login needed". |
-| **Watch (C)** | None. |
-| **Docs** | `doc/scopes.md` (+ `offline_access`), `AGENTS.md` (SSM defaults, known issues), `infra/lambda/README.md`. Note: `AGENTS.md` refers to `doc/auth.md`, `doc/plan.md` and `doc/sequences.md`, which don't exist in the repo; restore them or remove the references. |
+1. **Overnight check (blocking):** dev build logged in, untouched for 8+ h → still "Ready" in the morning? Without `offline_access` the refresh token may be tied to the SSO session. If it dies overnight, don't switch prod; ask Volvo developer support first.
+2. **Volvo developer portal** (manual): create the prod application → `vid-dc-…` client ID, secret, API key. Redirect URI `https://piotrserafin.github.io/ReVolverAuth/` (exact, with trailing slash). Same scopes as `/revolver/scopes` today, incl. `energy:state:read` and `energy:capability:read`. Publish it if the portal requires that before cars respond.
+3. **Save the current `/revolver/*` values** for rollback (run by the user; secrets stay out of chat).
+4. **SSM switch** (run by the user): `put-parameter --overwrite` for `client-id`, `client-secret`, `vcc-api-key`, `auth-endpoint`, `token-endpoint` (and `scopes` if they change). Then force a Lambda cold start, because config is cached per container:
+   `aws lambda update-function-configuration --function-name ReVolverAuthStack-token-exchange --description "ReVolver OAuth2 token exchange proxy for Volvo ID $(date +%s)"`
+5. **Test with v1.2.0** (no new app release needed): log in via the browser → commands, status, Energy API (battery) → token refresh after > 1 h idle and overnight.
+6. **Tell users** (store + GitHub release notes): "Log in once again."
+7. **Rollback** (until 2027-01-31): restore the saved SSM values + cold start.
+8. **Cleanup after 2027-01-31:** remove `volvoid.eu` from `ALLOWED_AUTH_ORIGINS` and the diagnostics page, delete the old application in the portal.
 
-### Cutover strategy
+### Not available
 
-**Option A: hard cutover (recommended).** The user base is small and every user has to re-login anyway. Pick a date, switch SSM, and post a note asking users to log in again.
-
-**Stretch, after A:** device flow login. It removes the ReVolverAuth frontend; see [Stretch: Device Authorization flow](#stretch-device-authorization-flow-rfc-8628).
-
-**Option B: dual-client Lambda until the deadline.** Keep the legacy config under `/revolver/legacy/*`. On refresh, try the new client, and on `invalid_grant`/`invalid_client` fall back to legacy. This avoids a forced re-login only until 2027-01-31, so it's more code for little gain. Not recommended.
-
-### Steps (Option A)
-
-1. **Volvo developer portal** (manual): create a new application → `vid-dc-…` client ID, secret and API key. Same redirect URI (`https://piotrserafin.github.io/ReVolverAuth/`), same scopes plus `offline_access`. **Include `energy:state:read` and `energy:capability:read`**: the Energy API is already in use (EV battery status, commit 475664f). Missing scopes mean another user re-login later. Publish the app if the portal requires that before cars respond.
-2. **ReVolverAuth:** in `auth/index.html`, change `ALLOWED_AUTH_ORIGIN` to accept both `https://volvoid.eu.volvocars.com/` and `https://auth.volvocars.com/`. Merge to `main` → `deploy-auth.yml` publishes it. This is harmless before the switch.
-3. **Lambda code:** update the default endpoints to Keycloak. Optionally map `invalid_grant` on refresh to a distinct error (`reauth_required`). Check with `cdk synth`; merging to `main` runs `cdk deploy` via `deploy-lambda.yml`, so **the merge needs confirmation**.
-4. **SSM switch** (needs confirmation): `put-parameter --overwrite` for `client-id`, `client-secret`, `vcc-api-key`, `auth-endpoint`, `token-endpoint`, `scopes`. The Lambda caches config per container, so force a cold start (redeploy or update an env var) so the new values take effect immediately.
-5. **PebbleKit JS** (optional): token clearing is **already done**: `refreshToken()` clears the tokens on 400/401, and the next `sendStatus()` shows "Login needed". Remaining options: map `reauth_required` (if added in step 3) the same way, and show "Login needed" instead of "Re-login needed" right away on a failed manual refresh.
-   - Optional: a Lambda `grant_type=revoke` → `revocation_endpoint`, called by JS before a re-login or a VIN change, so old refresh tokens don't stay valid.
-6. **Re-login** on the phone via Clay → "Log in with Volvo ID" → check that commands work.
-7. **Verify on a real car:**
-   - Access token lifetime (`expires_in`): is the 60 s refresh threshold still fine?
-   - Refresh token rotation is still single-use, so the refresh lock stays.
-   - The refresh token survives > 1 h idle and overnight (`offline_access`).
-   - The `invalid_grant` response shape for a dead refresh token.
-   - The Energy API (`/capabilities`, `/state`) still returns battery data with the new client.
-8. **Rollback:** keep the old SSM values in a note until verified. While the old client is still alive (before 2027-01-31), restoring the SSM values plus the Lambda cold start rolls back. ReVolverAuth accepts both origins, so it needs no rollback.
-9. **Cleanup after 2027-01-31:** remove the `volvoid.eu` origin from ReVolverAuth and delete the old application in the portal.
-
-### Stretch: Device Authorization flow (RFC 8628)
-
-**Goal:** remove the ReVolverAuth GitHub Pages frontend, the redirect URI and the CORS origin handling. The Lambda stays, because it still holds `client_secret` and `vcc-api-key`.
-
-**Precondition (blocking):** Volvo must enable the device grant for the `vid-dc-…` client. The realm advertises `device_authorization_endpoint` and the `urn:ietf:params:oauth:grant-type:device_code` grant, but Keycloak enables it **per client**. Check the portal app settings or ask Volvo developer support. If it's not available, skip this section; the migration above is complete without it.
-
-**Do this after** the base migration is verified. It's a separate release.
-
-#### Flow
-
-```
-Watch: "Login needed" → SELECT → "Log in"
-  JS  → Lambda  POST grant_type=device_start
-  Lambda → Volvo POST /protocol/openid-connect/auth/device   (Basic auth, scope incl. offline_access)
-        ← device_code, user_code, verification_uri(_complete), expires_in, interval
-  JS  → Watch   LOGIN_CODE="ABCD-EFGH", LOGIN_URL="auth.volvocars.com/…/device"
-  JS  → Pebble.openURL(verification_uri_complete)   (optional: login in the phone webview, code prefilled)
-  JS  polls Lambda every `interval` s: POST grant_type=urn:ietf:params:oauth:grant-type:device_code&device_code=…
-        authorization_pending → keep polling
-        slow_down             → interval += 5 s
-        expired_token         → "Code expired", offer retry
-        access_denied         → "Login cancelled"
-        200                   → store tokens (same shape as today, incl. vcc_api_key) → sendStatus()
-```
-
-#### Changes
-
-| Component | Change |
-|-----------|--------|
-| **Lambda** | New `grant_type=device_start` → call the device authorization endpoint with client auth and scopes from SSM. Accept `urn:ietf:params:oauth:grant-type:device_code` in `_handle` and forward it to the token endpoint. Response shape unchanged (`vcc_api_key` included). New SSM param `/revolver/device-endpoint` (optional, Keycloak default in code). |
-| **PebbleKit JS** | `startDeviceLogin()`: request a code, send it to the watch, poll with backoff, and handle the RFC 8628 errors. Optionally open `verification_uri_complete` via `Pebble.openURL` (webview); on `webviewclosed`, keep polling. Polling runs only while the app is open (known `setTimeout` caveat). |
-| **Watch (C)** | New message keys `LOGIN_CODE` (string) and `LOGIN_URL` (string). Show a login screen with the large code, the short URL and the expiry countdown. Add a `LOGIN` value for the `COMMAND` key to start the flow from the watch. |
-| **Clay** | Replace the "Log in with Volvo ID" link with a button/toggle that starts the device login, or with text: "Open ReVolver on the watch → Log in". |
-| **Removed (after transition)** | ReVolverAuth repo/site, `handle_config` GET, the `authorization_code` handler, SSM `redirect-uri` and `allowed-origins`, the auth-response branch in `webviewclosed`, CORS logic. |
-
-#### Security notes
-
-- A `device_code` can be redeemed through the public Lambda by anyone who holds it, the same exposure as today's auth code. Mitigations: it's short-lived (`expires_in`), it's only ever sent over HTTPS to PebbleKit JS, and it's never logged in the Lambda.
-- `user_code` phishing is a known risk for device flow. Show the exact verification URL on the watch, and never accept codes from third parties.
-- Optional: add a rate limit on `device_start` (Lambda reserved concurrency or a simple per-IP limit) so the endpoint can't be used to spam Volvo.
-
-#### Testing
-
-- Emulator: the full flow with a real Volvo account (the code is shown on the watch, approved in the browser).
-- Error paths: let the code expire, deny the consent, and close the app mid-poll → the next launch shows "Login needed".
-- Check that the refresh token issued by device flow behaves the same as the one from the auth code flow (`offline_access`, rotation).
+- **Device Authorization flow (RFC 8628):** the realm advertises it, but it's disabled for `vid-dc-` clients (`unauthorized_client`: "The flow is disabled for the client", tested 2026-11-12). It would have removed the auth page; not possible unless Volvo enables it per client.
+- **`offline_access`:** rejected (`invalid_scope`), see above.
 
 ### Open questions
 
-- Is the device grant enabled for `vid-dc-…` clients (stretch above)?
-- Is CIBA (`backchannel_authentication_endpoint`, approval pushed to the Volvo Cars app) available to third-party clients? It would be an even simpler watch login than device flow (no code to type), but it's unlikely to be available. Ask in the same support request.
-- Does the new application need Volvo approval/publishing before production use (evcc notes car status only resumes after publishing)?
-- Is the redirect URI accepted unchanged by Keycloak (exact match, trailing slash)?
-- Does the old `vcc-api-key` keep working (one community report says yes)? Use the new one regardless.
+- Does the refresh token survive overnight without `offline_access`? (step 1)
+- Does the new prod application need Volvo approval/publishing before cars respond? (evcc notes car status only resumes after publishing)
+- Optional: revoke old refresh tokens on re-login (`revocation_endpoint` via a Lambda `grant_type=revoke`).
 
 ---
 

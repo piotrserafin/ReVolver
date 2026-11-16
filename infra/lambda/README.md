@@ -47,7 +47,7 @@ ReVolverAuth page ──GET──► Lambda
   "client_id": "abc123",
   "redirect_uri": "https://piotrserafin.github.io/ReVolverAuth/",
   "scopes": "openid conve:lock conve:unlock ...",
-  "auth_endpoint": "https://volvoid.eu.volvocars.com/as/authorization.oauth2"
+  "auth_endpoint": "https://auth.volvocars.com/realms/volvocars/protocol/openid-connect/auth"
 }
 ```
 
@@ -181,7 +181,7 @@ Responds to browser CORS preflight requests with appropriate headers.
         │    sessionStorage    │                       │                        │
         │                      │                       │                        │
         │ Redirect ───────────────────────────────────>│                        │
-        │ GET /as/authorization.oauth2                 │                        │
+        │ GET <auth endpoint>                          │                        │
         │   ?client_id=abc123                          │                        │
         │   &redirect_uri=https://...ReVolverAuth/     │                        │
         │   &response_type=code                        │                        │
@@ -206,7 +206,7 @@ Responds to browser CORS preflight requests with appropriate headers.
         │ code_verifier=XYZ    │                       │                        │
         │─────────────────────>│                       │                        │
         │                      │                       │                        │
-        │                      │ POST /as/token.oauth2 │                        │
+        │                      │ POST <token endpoint> │                        │
         │                      │ Authorization: Basic  │                        │
         │                      │   base64(id:secret)   │                        │
         │                      │ Body:                 │                        │
@@ -293,7 +293,7 @@ Volvo checks:
         │                      │ - redirect-uri        │
         │                      │ - vcc-api-key         │
         │                      │                       │
-        │                      │ POST /as/token.oauth2 │
+        │                      │ POST <token endpoint> │
         │                      │ Authorization: Basic  │
         │                      │   base64(id:secret)   │
         │                      │ Body:                 │
@@ -332,7 +332,7 @@ Volvo checks:
         │ refresh_token=RT1    │                       │
         │─────────────────────>│                       │
         │                      │                       │
-        │                      │ POST /as/token.oauth2 │
+        │                      │ POST <token endpoint> │
         │                      │ Authorization: Basic  │
         │                      │ Body:                 │
         │                      │   grant_type=         │
