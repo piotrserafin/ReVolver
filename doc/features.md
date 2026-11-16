@@ -363,7 +363,7 @@ pebble clean && pebble build                # prod (default)
 
 Volvo's Keycloak login page renders blank in the Core Devices Pebble app's settings webview (Android), so nobody can log in. The old `volvoid.eu` login URL now forwards to the same page, so prod is affected too.
 
-Root cause (confirmed 2026-11-14): the settings webview injects `realm_guard.js` (commit [f5f688fe16](https://github.com/coredevices/mobileapp/commit/f5f688fe16cf40befd5a3e13ad6016caf88548eb)), which deletes `window.customElements`. Volvo's login bundle calls `window.customElements.get('track-event')` at module load (analytics), throws, and React unmounts. It was reproduced in desktop Chrome by injecting the guard, and the diagnostics page shows `customElements` missing on the device. Reported upstream with a suggested fix (an inert registry instead of deleting it). We can't change either side, so we log in outside the webview.
+Root cause (confirmed 2026-11-14): the settings webview injects `realm_guard.js` (commit [f5f688fe16](https://github.com/coredevices/mobileapp/commit/f5f688fe16cf40befd5a3e13ad6016caf88548eb)), which deletes `window.customElements`. Volvo's login bundle calls `window.customElements.get('track-event')` at module load (analytics), throws, and React unmounts. It was reproduced in desktop Chrome by injecting the guard, and the diagnostics page shows `customElements` missing on the device. Reported upstream as [coredevices/mobileapp#507](https://github.com/coredevices/mobileapp/issues/507) with a suggested fix (an inert registry instead of deleting it). We can't change either side, so we log in outside the webview.
 
 Related, also needed: `pebble.usesPermissions` in `package.json` (declared domains). Without it the webview blocks every host silently.
 
@@ -415,4 +415,6 @@ The in-webview login stays as a fallback ("Log in here instead"), so it works ag
 - [x] `cdk deploy -c stage=dev`.
 - [x] Push the branch → dev auth page.
 - [x] Phone, dev build: settings → browser → Volvo login → watch "Logged in!" (Pixel 8, Android 17 DP11).
-- [ ] Then: prod merge (deploys Lambda + table + auth page), release `v1.1.1` with `usesPermissions`.
+- [x] Prod merge (PR #3). The merge push event was lost during a GitHub incident; deployed with manual `workflow_dispatch` runs.
+- [x] Phone, prod build: browser login works.
+- [ ] Release `v1.2.0` (with `usesPermissions`).
