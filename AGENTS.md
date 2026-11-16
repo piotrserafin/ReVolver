@@ -247,10 +247,13 @@ See `doc/api.md` for full endpoint reference. The complete Connected Vehicle API
 - Sideloading clears PebbleKit JS localStorage — requires re-login during development
 - Volvo access tokens last ~5 min; refresh threshold is 60s before expiry
 - Investigating: occasional re-login needed after ~1h idle (diagnostic logs in place)
+- **Network domains must be declared** in `package.json` → `pebble.usesPermissions` (`Internet` + `domains`, each covering its subdomains). The Core Devices Pebble app treats `manifestVersion >= 2` apps (SDK 4.44 builds) as permission-declaring: PebbleKit JS and the settings webview may only reach declared/approved domains. The settings webview never prompts; undeclared hosts get a silent 403 (blank Volvo login page, `Failed to fetch`). Adding a new host (new Lambda URL, auth page domain, Volvo host) means adding it here and releasing a new version. Diagnose with `ReVolverAuth-dev/diag.html` (linked as "Diagnostics" in the auth page footer).
 
 ## Configuration
 
 Watchapp (not watchface): `"watchface": false` in `package.json`.
+
+Declared permissions (`pebble.usesPermissions`): `Internet` for `volvocars.com`, `piotrserafin.github.io`, `piotrserafin.dev`, and the prod + dev Lambda hosts. The SDK copies this into `appinfo.json` as-is; it can't vary per `REVOLVER_ENV`, so both Lambda hosts are always listed.
 
 ## SDK Documentation
 
