@@ -63,6 +63,7 @@ exactly what the server does:
 ## Your controls
 
 - You can revoke access at any time from your
-  [Volvo ID account settings](https://volvoid.eu.volvocars.com)
-- Tokens expire automatically (~5 minutes for access, 7 days for refresh)
+  [Volvo ID account settings](https://auth.volvocars.com/realms/volvocars/account)
+- Tokens expire automatically: the access token after ~5 minutes; the refresh
+  token is replaced on every use and expires if ReVolver is unused for a long time
 - No data is shared with third parties

@@ -3,12 +3,9 @@
 OAuth scopes requested by ReVolver during login. Configured in SSM under
 `/revolver/scopes` (space-separated) and sent in the `authorize` request.
 
-**Prod vs dev** (checked 2026-11-12):
-
-- Prod (`/revolver/scopes`): every scope below **except** `location:read` (27 scopes).
-- Dev (`/revolver-dev/scopes`): all 28 scopes below, plus `offline_access` if the dev Volvo
-  app is a Keycloak (`vid-dc-…`) client. Every scope must also be enabled on the dev Volvo
-  app in the developer portal, or authorize fails with `invalid_scope`.
+**Prod and dev** (since 2026-11-17): all 28 scopes below, incl. `location:read`. Every scope
+must also be enabled on the Volvo app in the developer portal, or authorize fails with
+`invalid_scope`. Don't add `offline_access`: Keycloak rejects it for `vid-dc-…` clients.
 
 Endpoint paths are relative to their API base URL:
 

@@ -435,15 +435,15 @@ aws ssm put-parameter --name /revolver-dev/vcc-api-key   --type SecureString --v
 aws ssm put-parameter --name /revolver-dev/redirect-uri    --type String --value "https://piotrserafin.github.io/ReVolverAuth-dev/"
 aws ssm put-parameter --name /revolver-dev/allowed-origins --type String --value "https://piotrserafin.github.io,https://piotrserafin.dev"
 aws ssm put-parameter --name /revolver-dev/scopes          --type String --value "openid conve:... energy:..."
-# Optional (e.g. Keycloak while prod is still on legacy Volvo ID):
+# Optional (the Lambda defaults are already Keycloak):
 aws ssm put-parameter --name /revolver-dev/auth-endpoint  --type String --value "https://auth.volvocars.com/realms/volvocars/protocol/openid-connect/auth"
 aws ssm put-parameter --name /revolver-dev/token-endpoint --type String --value "https://auth.volvocars.com/realms/volvocars/protocol/openid-connect/token"
 ```
 
 - `allowed-origins` needs **both** origins: GitHub Pages redirects `piotrserafin.github.io` to the custom domain `piotrserafin.dev`, so the browser calls from `.dev`. A missing origin shows up as a CORS error (`Access-Control-Allow-Origin` header contains the invalid value '').
-- `scopes` is required: the auth page rejects a config without it. Dev uses an extended scope list: prod scopes + `location:read` (see `doc/scopes.md`); every scope must also be enabled on the dev Volvo app, or authorize fails with `invalid_scope`. Add `offline_access` only with Keycloak endpoints.
+- `scopes` is required: the auth page rejects a config without it. Dev and prod use the same 28 scopes (see `doc/scopes.md`); every scope must also be enabled on the Volvo app, or authorize fails with `invalid_scope`. Don't add `offline_access`: Keycloak rejects it.
 - The Lambda caches config after the first call that finds any parameter. If it was called while the parameters were only partly set, force a cold start (see [Rotate Secrets](#rotate-secrets)) with `ReVolverAuthStack-dev-token-exchange`.
-- When not in use: `cdk destroy -c stage=dev`. The SSM parameters are kept; a redeploy creates a **new** Function URL, which must then be updated in `wscript` and `auth/index.html`.
+- When not in use: `cdk destroy -c stage=dev`. The SSM parameters are kept; a redeploy creates a **new** Function URL, which must then be updated in `wscript`, `.github/workflows/deploy-auth-dev.yml` (`DEV_LAMBDA_URL`), `auth/diag.html` and `package.json` (`usesPermissions`, needs a new app release).
 
 ## Error Handling
 

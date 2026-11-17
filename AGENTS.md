@@ -70,7 +70,7 @@ src/pkjs/
 doc/
   api.md                    - Volvo API endpoint reference
   scopes.md                 - Volvo OAuth scopes
-  features.md               - Planned features (Quick Launch, Keycloak migration, dev env)
+  features.md               - Feature plans and status (Quick Launch, Keycloak, dev env, browser login, Find my car)
   connected-vehicle-c3-specification.json - Volvo Connected Vehicle API OpenAPI spec (v2)
   energy-api-specification.json - Volvo Energy API OpenAPI spec (v2)
   location-specification.json   - Volvo Location API OpenAPI spec
@@ -174,13 +174,11 @@ var COMMANDS = {
 
 ## Auth Architecture
 
-OAuth2 PKCE flow with Volvo ID. Lambda required because Volvo needs both PKCE AND `client_secret`.
+OAuth2 PKCE flow with Volvo ID on Volvo's Keycloak (`auth.volvocars.com`, `vid-dc-` clients, no `offline_access`). Lambda required because Volvo needs both PKCE AND `client_secret`.
 
 See `infra/lambda/README.md` for why Lambda is required. (`doc/auth.md` with the full sequence diagram is not yet written.)
 
-**Current:** GitHub Pages frontend (source in `auth/`, synced to the `ReVolverAuth` repo by `deploy-auth.yml`) + Lambda proxy.
-
-**Planned:** Volvo ID → Keycloak migration (deadline 2027-01-31), dev environment, optional device-flow login — see `doc/features.md` #2/#3. (`doc/plan.md`, the older auth hosting options doc, is missing.)
+**Current:** GitHub Pages frontend (source in `auth/`, synced to the `ReVolverAuth` repo by `deploy-auth.yml`) + Lambda proxy. Default login runs in the phone's browser and hands tokens to PebbleKit JS through a DynamoDB pairing item (`doc/features.md` #4). Keycloak migration done 2026-11-17 (#2); old Volvo ID endpoints stay as a rollback until 2027-01-31. Device flow is disabled for `vid-dc-` clients.
 
 **Deploys are automatic:** merging to `main` deploys the Lambda (`infra/**`) and the auth page (`auth/**`). Treat a merge touching those paths as a deploy.
 
@@ -247,6 +245,7 @@ See `doc/api.md` for full endpoint reference. The complete Connected Vehicle API
 - Sideloading clears PebbleKit JS localStorage — requires re-login during development
 - Volvo access tokens last ~5 min; refresh threshold is 60s before expiry
 - Investigating: occasional re-login needed after ~1h idle (diagnostic logs in place)
+- Volvo login is blank inside the Pebble settings webview on Android with the plugins preview: `realm_guard.js` deletes `customElements` ([coredevices/mobileapp#507](https://github.com/coredevices/mobileapp/issues/507), fixed in the next Pebble app release). Browser login (#4) works around it. Core Devices plans a `Pebble.oauth()` API; `Pebble.webSignIn` is limited to their own store apps.
 - **Network domains must be declared** in `package.json` → `pebble.usesPermissions` (`Internet` + `domains`, each covering its subdomains). The Core Devices Pebble app treats `manifestVersion >= 2` apps (SDK 4.44 builds) as permission-declaring: PebbleKit JS and the settings webview may only reach declared/approved domains. The settings webview never prompts; undeclared hosts get a silent 403 (blank Volvo login page, `Failed to fetch`). Adding a new host (new Lambda URL, auth page domain, Volvo host) means adding it here and releasing a new version. Diagnose with `ReVolverAuth-dev/diag.html` (linked as "Diagnostics" in the auth page footer).
 
 ## Configuration

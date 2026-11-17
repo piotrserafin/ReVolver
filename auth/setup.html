@@ -49,10 +49,9 @@
   <div class="info">
     <strong>How tokens work:</strong>
     <ul>
-      <li>Access tokens expire after ~60 minutes</li>
+      <li>Access tokens expire after ~5 minutes</li>
       <li>ReVolver refreshes automatically in the background</li>
-      <li>Refresh tokens expire if unused for <strong>7 days</strong></li>
-      <li>After <strong>6 months</strong>, you'll need to log in again</li>
+      <li>If ReVolver is unused for a long time, you'll need to log in again</li>
     </ul>
   </div>
 
@@ -66,7 +65,7 @@
       <li>ReVolver uses OAuth2 with PKCE &mdash; your Volvo ID password is never shared with us</li>
       <li>Token exchange happens on a secure backend &mdash; no secrets in the app</li>
       <li>Browser login: your tokens wait for your phone for at most 10 minutes (encrypted, collected once, never sent to the browser)</li>
-      <li>You can revoke access at any time from your <a href="https://volvoid.eu.volvocars.com/" target="_blank" rel="noopener">Volvo ID account</a></li>
+      <li>You can revoke access at any time from your <a href="https://auth.volvocars.com/realms/volvocars/account" target="_blank" rel="noopener">Volvo ID account</a></li>
     </ul>
   </div>
 
