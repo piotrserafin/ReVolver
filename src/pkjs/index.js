@@ -803,6 +803,12 @@ Pebble.addEventListener('showConfiguration', function () {
   });
 });
 
+// Clay may key settings by name or by numeric message key, and wrap values in {value}.
+function settingValue(dict, name) {
+  var v = dict[name] !== undefined ? dict[name] : dict[String(keys[name])];
+  return v !== null && typeof v === 'object' ? v.value : v;
+}
+
 Pebble.addEventListener('webviewclosed', function (e) {
   if (!e || !e.response) return;
   console.log('webviewclosed payload: ' + decodeURIComponent(e.response).substring(0, 200));
@@ -837,6 +843,12 @@ Pebble.addEventListener('webviewclosed', function (e) {
     if (vibrate !== undefined) {
       var val = typeof vibrate === 'object' ? vibrate.value : vibrate;
       send({ VIBRATE: val ? 1 : 0 });
+    }
+    var quick = settingValue(dict, 'QUICK_ACTION');
+    var quickExit = settingValue(dict, 'QUICK_EXIT');
+    if (quick !== undefined || quickExit !== undefined) {
+      // "" can't be sent as an AppMessage string reliably; the watch treats "none" as off.
+      send({ QUICK_ACTION: quick ? String(quick) : 'none', QUICK_EXIT: quickExit ? 1 : 0 });
     }
     sendStatus();
   } catch (ex) {

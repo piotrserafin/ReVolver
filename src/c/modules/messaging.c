@@ -2,10 +2,11 @@
 
 #include "../windows/main_window.h"
 #include "commands.h"
+#include "quick_launch.h"
 
 static bool s_vibrate = true;
 
-static void vibrate(bool success) {
+void messaging_vibrate(bool success) {
   if (!s_vibrate)
     return;
   static const uint32_t ok_seg[] = {100};
@@ -18,7 +19,8 @@ static void vibrate(bool success) {
 static void inbox_received(DictionaryIterator *iter, void *ctx) {
   Tuple *t;
 
-  if ((t = dict_find(iter, MESSAGE_KEY_STATUS_MSG))) {
+  // Launch-time status ("Ready", "Refreshing...") would overwrite the quick action's status.
+  if ((t = dict_find(iter, MESSAGE_KEY_STATUS_MSG)) && !quick_launch_is_busy()) {
     main_window_set_status(t->value->cstring);
   }
 
@@ -39,15 +41,35 @@ static void inbox_received(DictionaryIterator *iter, void *ctx) {
     persist_write_bool(MESSAGE_KEY_VIBRATE, s_vibrate);
   }
 
+  if ((t = dict_find(iter, MESSAGE_KEY_QUICK_ACTION))) {
+    quick_launch_set_action(t->value->cstring);
+  }
+
+  if ((t = dict_find(iter, MESSAGE_KEY_QUICK_EXIT))) {
+    quick_launch_set_exit((bool)t->value->int32);
+  }
+
   if ((t = dict_find(iter, MESSAGE_KEY_COMMAND_RESULT))) {
     const char *str = t->value->cstring;
     bool success = (str[0] == '+');
     main_window_show_temp_status(str + 1);
-    vibrate(success);
+    messaging_vibrate(success);
+    quick_launch_on_result();
   }
+
+  // Any message from PebbleKit JS means it is running.
+  quick_launch_on_js_ready();
 }
 
 // Public API
+
+bool messaging_send_command(const char *cmd) {
+  DictionaryIterator *iter;
+  if (app_message_outbox_begin(&iter) != APP_MSG_OK)
+    return false;
+  dict_write_cstring(iter, MESSAGE_KEY_COMMAND, cmd);
+  return app_message_outbox_send() == APP_MSG_OK;
+}
 
 void messaging_init(void) {
   if (persist_exists(MESSAGE_KEY_VIBRATE)) {
