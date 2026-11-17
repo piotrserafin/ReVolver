@@ -62,6 +62,7 @@ src/c/
   modules/
     messaging.h/.c          - AppMessage handlers, vibration
     commands.h/.c           - Command table, bitmask, ActionMenu
+    quick_launch.h/.c       - Runs the configured action on Quick Launch
   windows/
     main_window.h/.c        - Main window UI, persisted display data
 src/pkjs/
@@ -120,6 +121,9 @@ SELECT → ActionMenu → pick command → status shows "Sending..."
 → status reverts to "Ready"
 ```
 
+### Quick Launch
+Settings → Quick Launch picks one action (no Unlock). Opened from a Quick Launch button, the app sends it as soon as PebbleKit JS is up (first inbox message), with no confirmation; "Phone not ready" after 10 s. Launch `STATUS_MSG`s are ignored until the result has been shown. BACK closes the app before the send.
+
 ### Vibration Feedback (configurable via Clay)
 - Success: single short pulse (100ms)
 - Error: double pulse (100ms-100ms-100ms)
@@ -157,6 +161,8 @@ var COMMANDS = {
 | `CAR_STATUS` | 10005 | JS → Watch | string | Live car state `lock\|engine\|energy\|range\|windows\|type` (type `F`=fuel, `B`=battery), e.g. "Locked\|Off\|45L\|520km\|OK\|F" |
 | `CAR_INFO` | 10006 | JS → Watch | string | Model + year ("XC60 2024"). Cached. |
 | `AVAILABLE_CMDS` | 10007 | JS → Watch | int | Bitmask of supported commands |
+| `QUICK_ACTION` | 10008 | JS → Watch | string | `COMMAND` string to run on Quick Launch; `none` = off. Persisted on watch. |
+| `QUICK_EXIT` | 10009 | JS → Watch | int | 1 = close the app 3 s after the quick action result. Persisted on watch. |
 
 ### Command Bit Flags (C defines, must match JS COMMANDS[].bit)
 

@@ -1,6 +1,7 @@
 #include "commands.h"
 
 #include "../windows/main_window.h"
+#include "messaging.h"
 
 typedef struct {
   const char *label;
@@ -44,12 +45,7 @@ static uint32_t s_available = 0xFFFFFFFF;  // All available by default.
 // Callbacks
 
 static void on_action(ActionMenu *menu, const ActionMenuItem *item, void *ctx) {
-  DictionaryIterator *iter;
-  if (app_message_outbox_begin(&iter) == APP_MSG_OK) {
-    dict_write_cstring(iter, MESSAGE_KEY_COMMAND,
-                       (const char *)action_menu_item_get_action_data(item));
-    app_message_outbox_send();
-  }
+  messaging_send_command((const char *)action_menu_item_get_action_data(item));
   main_window_set_status("Sending...");
 }
 

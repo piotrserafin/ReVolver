@@ -42,6 +42,44 @@
     "items": [
       {
         "type": "heading",
+        "defaultValue": "Quick Launch"
+      },
+      {
+        "type": "text",
+        "defaultValue": "Assign ReVolver to a Quick Launch button in the watch settings. Opening ReVolver with that button runs this action right away, without confirmation. Press BACK to cancel."
+      },
+      {
+        "type": "select",
+        "messageKey": "QUICK_ACTION",
+        "label": "Action",
+        "defaultValue": "",
+        "options": [
+          { "label": "None", "value": "" },
+          { "label": "Climate On", "value": "climatization-start" },
+          { "label": "Climate Off", "value": "climatization-stop" },
+          { "label": "Lock", "value": "lock" },
+          { "label": "Flash Lights", "value": "flash" },
+          { "label": "Honk", "value": "honk" },
+          { "label": "Honk + Flash", "value": "honk-flash" },
+          { "label": "Engine Start 5 min", "value": "engine-start:5" },
+          { "label": "Engine Start 10 min", "value": "engine-start:10" },
+          { "label": "Engine Start 15 min", "value": "engine-start:15" },
+          { "label": "Engine Stop", "value": "engine-stop" }
+        ]
+      },
+      {
+        "type": "toggle",
+        "messageKey": "QUICK_EXIT",
+        "label": "Close app after the action",
+        "defaultValue": false
+      }
+    ]
+  },
+  {
+    "type": "section",
+    "items": [
+      {
+        "type": "heading",
         "defaultValue": "Volvo ID"
       },
       {

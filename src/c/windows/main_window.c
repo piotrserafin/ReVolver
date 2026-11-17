@@ -1,6 +1,7 @@
 #include "main_window.h"
 
 #include "../modules/commands.h"
+#include "../modules/messaging.h"
 
 // Persist keys
 #define PERSIST_INFO 1
@@ -258,11 +259,7 @@ static void on_select(ClickRecognizerRef ref, void *ctx) {
 }
 
 static void on_up(ClickRecognizerRef ref, void *ctx) {
-  DictionaryIterator *iter;
-  if (app_message_outbox_begin(&iter) == APP_MSG_OK) {
-    dict_write_cstring(iter, MESSAGE_KEY_COMMAND, "refresh");
-    app_message_outbox_send();
-  }
+  messaging_send_command("refresh");
   // Don't hide existing data on manual refresh, just show status
   if (s_revert_timer) {
     app_timer_cancel(s_revert_timer);

@@ -51,7 +51,9 @@
       "VIBRATE",
       "CAR_STATUS",
       "CAR_INFO",
-      "AVAILABLE_CMDS"
+      "AVAILABLE_CMDS",
+      "QUICK_ACTION",
+      "QUICK_EXIT"
     ],
     "resources": {
       "media": [
