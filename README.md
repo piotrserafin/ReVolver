@@ -32,6 +32,8 @@ Remote control your Volvo from your Pebble smartwatch.
 - Chalk (Pebble Time Round)
 - Diorite (Pebble 2)
 - Emery (Pebble Time 2)
+- Flint (Pebble 2 Duo)
+- Gabbro (Pebble Round 2)
 
 ## How It Works
 
