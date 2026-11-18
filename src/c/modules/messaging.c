@@ -1,5 +1,6 @@
 #include "messaging.h"
 
+#include "../windows/find_window.h"
 #include "../windows/main_window.h"
 #include "commands.h"
 #include "quick_launch.h"
@@ -26,6 +27,10 @@ static void inbox_received(DictionaryIterator *iter, void *ctx) {
 
   if ((t = dict_find(iter, MESSAGE_KEY_CAR_STATUS))) {
     main_window_set_car_status(t->value->cstring);
+  }
+
+  if ((t = dict_find(iter, MESSAGE_KEY_FIND_CAR))) {
+    find_window_set_data(t->value->cstring);
   }
 
   if ((t = dict_find(iter, MESSAGE_KEY_CAR_INFO))) {

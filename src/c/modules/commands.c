@@ -1,5 +1,6 @@
 #include "commands.h"
 
+#include "../windows/find_window.h"
 #include "../windows/main_window.h"
 #include "messaging.h"
 
@@ -41,6 +42,7 @@ static const Command COMMANDS[NUM_COMMANDS] = {
 static ActionMenu *s_menu;
 static ActionMenuLevel *s_level;
 static uint32_t s_available = 0xFFFFFFFF;  // All available by default.
+static bool s_open_find;
 
 // Callbacks
 
@@ -49,8 +51,23 @@ static void on_action(ActionMenu *menu, const ActionMenuItem *item, void *ctx) {
   main_window_set_status("Sending...");
 }
 
+static void on_find(ActionMenu *menu, const ActionMenuItem *item, void *ctx) {
+  s_open_find = true;  // push after the menu has closed
+}
+
+static void open_find(void *ctx) {
+  find_window_push();
+}
+
 static void on_closed(ActionMenu *menu, const ActionMenuItem *item, void *ctx) {
+  action_menu_hierarchy_destroy(action_menu_get_root_level(menu), NULL, NULL);
+  s_level = NULL;
   s_menu = NULL;
+  if (s_open_find) {
+    s_open_find = false;
+    // Not from inside did_close: the menu window is still being torn down.
+    app_timer_register(0, open_find, NULL);
+  }
 }
 
 // Public API
@@ -60,15 +77,13 @@ void commands_set_available(uint32_t bitmask) {
 }
 
 void commands_open_menu(void) {
-  int count = 0;
+  int count = 1;  // "Find car"
   for (int i = 0; i < NUM_COMMANDS; i++) {
     if (s_available & COMMANDS[i].bit)
       count++;
   }
-  if (count == 0)
-    count = 1;
-
   s_level = action_menu_level_create(count);
+  action_menu_level_add_action(s_level, "Find car", on_find, NULL);
   for (int i = 0; i < NUM_COMMANDS; i++) {
     if (!(s_available & COMMANDS[i].bit))
       continue;
