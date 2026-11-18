@@ -52,6 +52,14 @@ During login and token refresh, your tokens briefly pass through the proxy
 This is the same architecture used by every third-party car app (Tesla,
 BMW, etc.) that requires a server-side secret.
 
+## Find car
+
+"Find car" reads your car's parked position from Volvo and your phone's
+location (only while the Find car screen is open), then works out the distance
+and direction on your phone. Neither location is sent to the ReVolver server or
+stored. The Pebble app asks for the location permission; ReVolver works without
+it, only Find car doesn't.
+
 ## Open source
 
 Both the app and the Lambda proxy are fully open source. You can inspect
