@@ -89,7 +89,8 @@ function field(resp, name) {
   return payload && payload[name];
 }
 
-function volvoGet(path, cb) {
+// On 401 refreshes the token and retries once (tokens can be revoked before they expire).
+function volvoGet(path, cb, isRetry) {
   var url = path.indexOf('http') === 0 ? path : VOLVO_API + path;
   var req = new XMLHttpRequest();
   req.open('GET', url);
@@ -103,6 +104,11 @@ function volvoGet(path, cb) {
       } catch (e) {
         cb(null);
       }
+    } else if (req.status === 401 && !isRetry) {
+      refreshToken(function (ok) {
+        if (ok) volvoGet(path, cb, true);
+        else cb(null);
+      });
     } else {
       cb(null);
     }
@@ -342,6 +348,15 @@ function pump() {
   );
 }
 
+// Watch-side bitmask (C CMD_* flags) for a list of Volvo command names.
+function commandsMask(cmds) {
+  var mask = 0;
+  cmds.forEach(function (cmd) {
+    if (cmd in COMMANDS) mask |= COMMANDS[cmd].bit;
+  });
+  return mask;
+}
+
 function sendStatus() {
   var vin = get(STORE.VIN);
   var token = get(STORE.ACCESS_TOKEN);
@@ -360,11 +375,7 @@ function sendStatus() {
   var cachedCmds = get(STORE.AVAILABLE_COMMANDS);
   if (cachedCmds) {
     try {
-      var mask = 0;
-      JSON.parse(cachedCmds).forEach(function (cmd) {
-        if (cmd in COMMANDS) mask |= COMMANDS[cmd].bit;
-      });
-      send({ AVAILABLE_CMDS: mask });
+      send({ AVAILABLE_CMDS: commandsMask(JSON.parse(cachedCmds)) });
     } catch (e) {}
   }
 
@@ -409,11 +420,7 @@ function fetchAvailableCommands() {
     set(STORE.AVAILABLE_COMMANDS, JSON.stringify(cmds));
     console.log('Available commands: ' + cmds.join(', '));
 
-    var mask = 0;
-    cmds.forEach(function (cmd) {
-      if (cmd in COMMANDS) mask |= COMMANDS[cmd].bit;
-    });
-    send({ AVAILABLE_CMDS: mask });
+    send({ AVAILABLE_CMDS: commandsMask(cmds) });
   });
 }
 
@@ -825,25 +832,19 @@ Pebble.addEventListener('webviewclosed', function (e) {
   // Clay settings response
   try {
     var dict = clay.getSettings(e.response);
-    var vin = dict.VIN || dict[String(keys.VIN)];
+    var vin = settingValue(dict, 'VIN');
     if (vin) {
-      if (typeof vin === 'object') vin = vin.value;
-      if (vin) {
-        var oldVin = get(STORE.VIN);
-        set(STORE.VIN, String(vin));
-        // Clear cached car data if VIN changed
-        if (oldVin && oldVin !== String(vin)) {
-          clear(STORE.CAR_INFO);
-          clear(STORE.AVAILABLE_COMMANDS);
-          clear(STORE.ENERGY_CAPABLE);
-        }
+      var oldVin = get(STORE.VIN);
+      set(STORE.VIN, String(vin));
+      // Clear cached car data if VIN changed
+      if (oldVin && oldVin !== String(vin)) {
+        clear(STORE.CAR_INFO);
+        clear(STORE.AVAILABLE_COMMANDS);
+        clear(STORE.ENERGY_CAPABLE);
       }
     }
-    var vibrate = dict.VIBRATE !== undefined ? dict.VIBRATE : dict[String(keys.VIBRATE)];
-    if (vibrate !== undefined) {
-      var val = typeof vibrate === 'object' ? vibrate.value : vibrate;
-      send({ VIBRATE: val ? 1 : 0 });
-    }
+    var vibrate = settingValue(dict, 'VIBRATE');
+    if (vibrate !== undefined) send({ VIBRATE: vibrate ? 1 : 0 });
     var quick = settingValue(dict, 'QUICK_ACTION');
     var quickExit = settingValue(dict, 'QUICK_EXIT');
     if (quick !== undefined || quickExit !== undefined) {

@@ -77,7 +77,6 @@ doc/
   connected-vehicle-c3-specification.json - Volvo Connected Vehicle API OpenAPI spec (v2)
   energy-api-specification.json - Volvo Energy API OpenAPI spec (v2)
   location-specification.json   - Volvo Location API OpenAPI spec
-  (missing: auth.md, sequences.md, plan.md — referenced below, not yet written)
 auth/
   index.html                - ReVolverAuth login page (synced to ReVolverAuth repo by CI)
   setup.html, license.html, style.css
@@ -94,10 +93,10 @@ infra/
 
 ## App Flow
 
-`doc/sequences.md` (not yet written; see `doc/features.md` #1) should hold sequence diagrams covering:
-- First launch (no tokens → settings → OAuth → ready)
-- Subsequent launch (cached data + token refresh)
-- Command execution (normal + 401 retry)
+No sequence diagrams yet. Main flows:
+- First launch: no tokens → settings → browser login (pairing) → "Logged in!" → ready
+- Subsequent launch: cached data shown at once, token refreshed if needed (see Token Refresh)
+- Command execution: see Command Flow; 401 → refresh + retry once
 
 ## App Architecture
 
@@ -184,7 +183,7 @@ var COMMANDS = {
 
 OAuth2 PKCE flow with Volvo ID on Volvo's Keycloak (`auth.volvocars.com`, `vid-dc-` clients, no `offline_access`). Lambda required because Volvo needs both PKCE AND `client_secret`.
 
-See `infra/lambda/README.md` for why Lambda is required. (`doc/auth.md` with the full sequence diagram is not yet written.)
+See `infra/lambda/README.md` for why Lambda is required.
 
 **Current:** GitHub Pages frontend (source in `auth/`, synced to the `ReVolverAuth` repo by `deploy-auth.yml`) + Lambda proxy. Default login runs in the phone's browser and hands tokens to PebbleKit JS through a DynamoDB pairing item (`doc/features.md` #4). Keycloak migration done 2026-11-17 (#2); old Volvo ID endpoints stay as a rollback until 2027-01-31. Device flow is disabled for `vid-dc-` clients.
 
@@ -209,7 +208,7 @@ Dev stack uses the same names under `/revolver-dev/*` (own Volvo app, extended `
 
 - Auto-refresh on launch if token expires in < 60s or API key missing
 - Auto-refresh before each command if expired
-- Retry on 401 from Volvo (refresh + retry once)
+- Retry on 401 from Volvo (refresh + retry once), for commands and status GETs (`volvoGet`)
 - Refresh lock prevents concurrent requests (Volvo refresh tokens are single-use)
 - Lambda returns `vcc_api_key` alongside tokens
 
