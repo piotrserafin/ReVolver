@@ -16,6 +16,8 @@ Remote control your Volvo from your Pebble smartwatch.
 - 🔔 Haptic feedback on command result (configurable)
 - 🎯 Dynamic command menu (only shows what your car supports)
 - 🔐 Confirmation prompts for sensitive actions (unlock, engine start)
+- 🧭 Find car: distance and direction to your parked car
+- 🚀 Quick Launch: run one chosen action (e.g. climate on) straight from a watch button
 
 ## Screenshots
 
@@ -112,6 +114,8 @@ pebble install --phone <IP>
 3. Tap "Log in with Volvo ID", then "Log in with Volvo ID in browser"
 4. Log in with your Volvo ID in the browser
 5. Go back to the Pebble app — the watch shows "Logged in!", then "Ready"
+
+For **Find car**, location has to be allowed in two places: in Android settings for the Pebble app (Apps → Pebble → Permissions → Location, with phone location turned on), and for ReVolver when the Pebble app asks.
 
 Keep ReVolver open on the watch while logging in. "Log in here instead" uses the login inside the Pebble app, which currently shows a blank page on Android ([coredevices/mobileapp#507](https://github.com/coredevices/mobileapp/issues/507)).
 
