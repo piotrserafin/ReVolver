@@ -7,7 +7,7 @@
   ],
   "private": true,
   "dependencies": {
-    "pebble-clay": "^1.0.4"
+    "@rebble/clay": "^1.1.0"
   },
   "pebble": {
     "displayName": "ReVolver",
@@ -19,7 +19,9 @@
       "basalt",
       "chalk",
       "diorite",
-      "emery"
+      "emery",
+      "flint",
+      "gabbro"
     ],
     "watchapp": {
       "watchface": false

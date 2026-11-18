@@ -13,6 +13,8 @@ ReVolver — **Re**mote **Vol**vo controll**er**. A Pebble smartwatch applicatio
 - chalk (Pebble Time Round)
 - diorite (Pebble 2)
 - emery (Pebble Time 2)
+- flint (Pebble 2 Duo)
+- gabbro (Pebble Round 2)
 
 ## Commands
 
