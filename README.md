@@ -120,7 +120,7 @@ Keep ReVolver open on the watch while logging in. "Log in here instead" uses the
 - **UP** — Refresh car status
 - **SELECT** — Open command menu
 - **Pick a command** — Executes immediately, status shows result
-- **Vibration** — Single pulse = success, triple = error
+- **Vibration** — single pulse = success, double = error
 
 ## Documentation
 

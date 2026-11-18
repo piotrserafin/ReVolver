@@ -385,6 +385,8 @@ static void window_unload(Window *w) {
   layer_destroy(s_spinner_layer);
   if (s_revert_timer)
     app_timer_cancel(s_revert_timer);
+  window_destroy(s_window);
+  s_window = NULL;
 }
 
 void main_window_push(void) {
