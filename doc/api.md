@@ -46,8 +46,10 @@ All commands take an empty JSON body `{}` and return `{data: {vin, invokeStatus,
 | `brakes`                | Brake fluid level                  | `brakeFluid.value`                               |
 | `tyres`                 | Tyre pressure status               | per-tyre values                                  |
 | `warnings`              | Active warnings                    | various                                          |
-| `statistics`            | Trip stats                         | various                                          |
+| `statistics`            | Trip stats, fuel range             | `distanceToEmptyTank.value` (km/mi)²; also `averageFuelConsumption`, `averageSpeed`, `tripMeterManual`, `tripMeterAutomatic` |
 | `command-accessibility` | Which commands are available       | per-command availability                         |
+
+² The published OpenAPI spec (`doc/connected-vehicle-c3-specification.json`) still names it `distanceToEmpty`; real responses (checked 2026-11-19) use `distanceToEmptyTank`, plus `*Automatic` / `*Manual` variants of the trip fields. ReVolver reads `distanceToEmptyTank` and falls back to `distanceToEmpty`.
 
 ### Common Response Format
 
@@ -75,8 +77,8 @@ Content-Type: application/json
 
 ## Currently Used in ReVolver
 
-**Commands:** flash, honk-flash, lock, unlock, climatization-start, climatization-stop
+**Commands:** flash, honk, honk-flash, lock, unlock, climatization-start, climatization-stop, engine-start, engine-stop
 
-**Status:** doors (lock state), fuel (fuel level), state (EV battery, Energy API v2)
+**Status:** command-accessibility, commands, vehicle details (model/year), doors (lock state), engine-status, fuel (fuel level), statistics (fuel range), windows, state + capabilities (EV battery, Energy API v2)
 
 ¹ `state` / `capabilities` live on the **Energy API v2** (`https://api.volvocars.com/energy/v2/vehicles/{vin}/...`), not the Connected Vehicle base URL. `state` requires `energy:state:read`; `capabilities` requires `energy:capability:read` (Energy API v1 / `recharge-status` was removed — returns 410 GONE). On first launch per VIN the app checks `capabilities.getEnergyState.isSupported` (cached in JS localStorage); only if supported does it call `/state`, then shows battery % under a "Battery" label as a fallback when `/fuel` has no `fuelAmount`. Range units follow the response `unit` (`km` or `mi`, market-dependent).
