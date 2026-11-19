@@ -4,7 +4,7 @@ Planned features, one section each. Status: `planned` → `in progress` → `don
 
 | # | Feature | Status | Source |
 |---|---------|--------|--------|
-| 1 | [Quick Launch action](#1-quick-launch-action) | done (unreleased, v1.3.0) | User request |
+| 1 | [Quick Launch action](#1-quick-launch-action) | done (v1.3.0) | User request |
 | 2 | [Volvo ID → Keycloak migration](#2-volvo-id--keycloak-migration) | done (2026-11-17) | Volvo announcement — **deadline 2027-01-31**; old-app cleanup after the deadline |
 | 3 | [Dev environment (dev credentials + endpoint)](#3-dev-environment) | done | Development need |
 | 4 | [Browser login with pairing](#4-browser-login-with-pairing) | done (v1.2.0) | Volvo login page blank in the Pebble settings webview ([mobileapp#507](https://github.com/coredevices/mobileapp/issues/507)) |
@@ -13,7 +13,7 @@ Planned features, one section each. Status: `planned` → `in progress` → `don
 
 ## 1. Quick Launch action
 
-**Status:** done (PR #7), tested on a watch (dev build). Ships in v1.3.0.
+**Status:** done (PR #7), released in v1.3.0.
 
 ### Request
 
