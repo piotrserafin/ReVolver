@@ -568,7 +568,8 @@ function doFetchCarStatus(energyCapable) {
   });
 
   volvoGet('/vehicles/' + vin + '/statistics', function (resp) {
-    var distanceToEmpty = field(resp, 'distanceToEmpty');
+    // Current API: distanceToEmptyTank; the published spec still says distanceToEmpty.
+    var distanceToEmpty = field(resp, 'distanceToEmptyTank') || field(resp, 'distanceToEmpty');
     if (distanceToEmpty && distanceToEmpty.value !== undefined && distanceToEmpty.value !== null) {
       var range = parseFloat(distanceToEmpty.value);
       if (!isNaN(range)) {
