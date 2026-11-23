@@ -46,6 +46,11 @@
         },
         "reason": "Log in with Volvo ID and control your car through the Volvo API",
         "required": true
+      },
+      {
+        "name": "Location",
+        "reason": "Show the way to your parked car",
+        "required": false
       }
     ],
     "messageKeys": [
@@ -58,7 +63,8 @@
       "CAR_INFO",
       "AVAILABLE_CMDS",
       "QUICK_ACTION",
-      "QUICK_EXIT"
+      "QUICK_EXIT",
+      "FIND_CAR"
     ],
     "resources": {
       "media": [

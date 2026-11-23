@@ -68,6 +68,7 @@ src/c/
     quick_launch.h/.c       - Runs the configured action on Quick Launch
   windows/
     main_window.h/.c        - Main window UI, persisted display data
+    find_window.h/.c        - Find car screen (direction, distance, position age)
 src/pkjs/
   index.js                  - Volvo API, token management, command execution
   config.json               - Clay settings (VIN, vibration toggle)
@@ -115,6 +116,7 @@ No sequence diagrams yet. Main flows:
 - **UP button** — manual refresh of car status
 
 ### ActionMenu (triggered by SELECT button)
+- "Find car" first (always shown; opens the Find car window after the menu closes)
 - Dynamic list based on vehicle capabilities (bitmask from `/commands` API)
 - Confirmation sub-menu for Unlock and Engine Start
 - Engine Start: time selection (1/3/5/10/15 min) → Confirm
@@ -129,6 +131,12 @@ SELECT → ActionMenu → pick command → status shows "Sending..."
 
 ### Quick Launch
 Settings → Quick Launch picks one action (no Unlock). Opened from a Quick Launch button, the app sends it as soon as PebbleKit JS is up (first inbox message), with no confirmation; "Phone not ready" after 10 s. Launch `STATUS_MSG`s are ignored until the result has been shown. BACK closes the app before the send.
+
+### Find Car
+Window opens → `find:start`. JS fetches the car position once (`GET https://api.volvocars.com/location/v1/vehicles/{vin}/location`, scope `location:read`; 403 → "Log in again to enable") and watches phone GPS (`navigator.geolocation.watchPosition`, `Location` permission in `usesPermissions`). Haversine distance + bearing, sent at most every 2 s, only on change. Within max(30 m, GPS accuracy) → "You're close". Window closes → `find:stop` → `clearWatch`. Locations never leave the phone, except when the user taps "Walk to car in Maps".
+
+Walking directions (phase 3): the car's last position is saved in `revolver_car_location`; with it, the settings page gets a "Find car" section whose button calls `Pebble.openUrl` (Google Maps, `travelmode=walking`) from a Clay custom function (`clayCustomFn`, data via `clay.meta.userData`). The watch can't open anything on the phone: `Pebble.openURL` from PebbleKit JS is dropped by the Core Devices app unless the settings page is being opened (checked in its source 2026-11-23). SELECT in the Find car window shows where to tap instead.
+Compass (`#if defined(PBL_COMPASS)`, not diorite): arrow rotated by `bearing + magnetic_heading` (`magnetic_heading` grows counter-clockwise; magnetic north, declination ignored), 5° heading filter, subscribed only while the window is open. Uncalibrated (`CompassStatusDataInvalid`) → direction text + "Move your wrist". Emulator: `pebble emu-compass --calibrated --heading N` delivers only the first event after subscribe.
 
 ### Vibration Feedback (configurable via Clay)
 - Success: single short pulse (100ms)
@@ -169,6 +177,7 @@ var COMMANDS = {
 | `AVAILABLE_CMDS` | 10007 | JS → Watch | int | Bitmask of supported commands |
 | `QUICK_ACTION` | 10008 | JS → Watch | string | `COMMAND` string to run on Quick Launch; `none` = off. Persisted on watch. |
 | `QUICK_EXIT` | 10009 | JS → Watch | int | 1 = close the app 3 s after the quick action result. Persisted on watch. |
+| `FIND_CAR` | 10010 | JS → Watch | string | `distance\|bearing\|note` (e.g. "350 m\|45\|seen 5 min ago", bearing -1 = none) or `!message`. Started/stopped by `COMMAND` `find:start` / `find:stop`; `find:phone` (SELECT) → phone toast pointing to the settings button. |
 
 ### Command Bit Flags (C defines, must match JS COMMANDS[].bit)
 
@@ -255,6 +264,8 @@ See `doc/api.md` for full endpoint reference. The complete Connected Vehicle API
 - Clay returns numeric message keys on real hardware — use `require('message_keys')` for lookup
 - `setTimeout` in PebbleKit JS may be killed by phone OS — avoid for critical sends
 - AppMessage requires queue pattern (only one message in flight at a time)
+- **Never call `compass_service_peek()` before `compass_service_subscribe()`.** Unsubscribed, peek subscribes by itself; the second subscribe registers the same event entry twice and corrupts the firmware event list → firmware App fault on a later screen (e.g. opening the ActionMenu). Real-watch only; the emulator has no magnetometer. Also call `compass_service_set_heading_filter()` after subscribe (subscribe resets the config).
+- ActionMenu: free the hierarchy in `did_close` (`action_menu_hierarchy_destroy`) and push other windows via `app_timer_register(0, …)`, not from inside `did_close`.
 - Sideloading clears PebbleKit JS localStorage — requires re-login during development
 - Volvo access tokens last ~5 min; refresh threshold is 60s before expiry
 - Volvo login is blank inside the Pebble settings webview on Android with the plugins preview: `realm_guard.js` deletes `customElements` ([coredevices/mobileapp#507](https://github.com/coredevices/mobileapp/issues/507), fixed in the next Pebble app release). Browser login (#4) works around it. Core Devices plans a `Pebble.oauth()` API; `Pebble.webSignIn` is limited to their own store apps.
