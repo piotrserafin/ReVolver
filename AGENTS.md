@@ -21,6 +21,7 @@ ReVolver — **Re**mote **Vol**vo controll**er**. A Pebble smartwatch applicatio
 ```bash
 pebble build                             # Build for all platforms
 pebble clean                             # Clean build artifacts
+npm test                                 # JS tests (Node, no build or SDK needed)
 pebble install --emulator basalt         # Install on emulator
 pebble screenshot --scale 6 --no-open screenshot.png  # Screenshot
 ```
@@ -80,7 +81,11 @@ doc/
 auth/
   index.html                - ReVolverAuth login page (synced to ReVolverAuth repo by CI)
   setup.html, license.html, style.css
+test/
+  harness.js                - Loads index.js in Node with fake Pebble/XHR/Clay
+  *.test.js                 - node:test tests (status, token refresh, settings)
 .github/workflows/
+  ci.yml                    - PRs + main: JS tests, dev + prod build, prod .pbw check (7 platforms, no dev URLs)
   deploy-auth.yml           - push to main (auth/**) → sync to ReVolverAuth (GitHub Pages)
   deploy-lambda.yml         - push to main (infra/**) → cdk deploy (no approval)
   release.yml               - tag v* → pebble build → GitHub release (.pbw)
