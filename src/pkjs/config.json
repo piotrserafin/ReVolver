@@ -58,6 +58,7 @@
           { "label": "Climate On", "value": "climatization-start" },
           { "label": "Climate Off", "value": "climatization-stop" },
           { "label": "Lock", "value": "lock" },
+          { "label": "Lock (pet mode)", "value": "lock-reduced-guard" },
           { "label": "Flash Lights", "value": "flash" },
           { "label": "Honk", "value": "honk" },
           { "label": "Honk + Flash", "value": "honk-flash" },

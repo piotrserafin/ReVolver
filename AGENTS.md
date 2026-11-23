@@ -177,6 +177,7 @@ var COMMANDS = {
 #define CMD_CLIMATE_STOP  (1 << 6)  // 0x40
 #define CMD_ENGINE_START  (1 << 7)  // 0x80
 #define CMD_ENGINE_STOP   (1 << 8)  // 0x100
+#define CMD_LOCK_REDUCED  (1 << 9)  // 0x200 lock-reduced-guard ("Lock (pet mode)")
 ```
 
 ## Auth Architecture

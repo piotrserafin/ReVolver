@@ -10,7 +10,7 @@ All commands take an empty JSON body `{}` and return `{data: {vin, invokeStatus,
 | `honk`                | Honk horn             |
 | `honk-flash`          | Honk and Flash        |
 | `lock`                | Lock doors            |
-| `lock-reduced-guard`  | Lock (reduced guard)  |
+| `lock-reduced-guard`  | Lock (reduced guard): alarm without interior motion/tilt sensors, e.g. pet in the car |
 | `unlock`              | Unlock doors          |
 | `climatization-start` | Start A/C / heater    |
 | `climatization-stop`  | Stop A/C / heater     |
@@ -77,7 +77,7 @@ Content-Type: application/json
 
 ## Currently Used in ReVolver
 
-**Commands:** flash, honk, honk-flash, lock, unlock, climatization-start, climatization-stop, engine-start, engine-stop
+**Commands:** flash, honk, honk-flash, lock, lock-reduced-guard, unlock, climatization-start, climatization-stop, engine-start, engine-stop
 
 **Status:** command-accessibility, commands, vehicle details (model/year), doors (lock state), engine-status, fuel (fuel level), statistics (fuel range), windows, state + capabilities (EV battery, Energy API v2)
 

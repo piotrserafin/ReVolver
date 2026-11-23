@@ -9,6 +9,7 @@ Remote control your Volvo from your Pebble smartwatch.
 - ⚡ Flash exterior lights
 - 📯 Honk / Honk + Flash
 - 🔒 Lock / Unlock doors
+- 🐾 Lock (pet mode): reduced alarm guard, interior motion and tilt sensors off
 - ❄️ Climate on / off
 - 🚗 Engine start / stop (with duration picker)
 - 📊 Live dashboard: engine, doors, windows, fuel/battery & range

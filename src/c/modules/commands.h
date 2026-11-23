@@ -12,6 +12,7 @@
 #define CMD_CLIMATE_STOP (1 << 6)
 #define CMD_ENGINE_START (1 << 7)
 #define CMD_ENGINE_STOP (1 << 8)
+#define CMD_LOCK_REDUCED (1 << 9)  // lock-reduced-guard: no interior motion/tilt sensors
 
 void commands_set_available(uint32_t bitmask);
 void commands_open_menu(void);
