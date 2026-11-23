@@ -51,7 +51,9 @@ var COMMANDS = {
       return JSON.stringify({ runtimeMinutes: parseInt(p, 10) });
     }
   },
-  'engine-stop': { bit: 0x100, success: 'Stopped!' }
+  'engine-stop': { bit: 0x100, success: 'Stopped!' },
+  // Alarm without interior motion/tilt sensors, e.g. a pet left in the car.
+  'lock-reduced-guard': { bit: 0x200, success: 'Locked (pet)!' }
 };
 
 var STORE = {

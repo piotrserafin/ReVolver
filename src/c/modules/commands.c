@@ -14,7 +14,7 @@ static const BodyOption ENGINE_START_OPTIONS[] = {{"1 min", "engine-start:1"},
                                                   {"10 min", "engine-start:10"},
                                                   {"15 min", "engine-start:15"}};
 
-#define NUM_COMMANDS 9
+#define NUM_COMMANDS 10
 
 typedef struct {
   uint32_t bit;
@@ -30,6 +30,7 @@ static const Command COMMANDS[NUM_COMMANDS] = {
     {CMD_HONK, "Honk", "honk", true, NULL, 0},
     {CMD_HONK_FLASH, "Honk + Flash", "honk-flash", true, NULL, 0},
     {CMD_LOCK, "Lock", "lock", false, NULL, 0},
+    {CMD_LOCK_REDUCED, "Lock (pet mode)", "lock-reduced-guard", false, NULL, 0},
     {CMD_UNLOCK, "Unlock", "unlock", true, NULL, 0},
     {CMD_CLIMATE_START, "Climate On", "climatization-start", true, NULL, 0},
     {CMD_CLIMATE_STOP, "Climate Off", "climatization-stop", false, NULL, 0},
