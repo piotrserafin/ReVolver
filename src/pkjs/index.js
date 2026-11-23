@@ -151,7 +151,7 @@ function refreshToken(cb) {
 
   refreshInFlight = true;
   if (cb) refreshQueue.push(cb);
-  console.log('Refreshing with RT: ' + token.substring(0, 8) + '...');
+  console.log('Refreshing token');
 
   var req = new XMLHttpRequest();
   req.open('POST', LAMBDA_URL);
@@ -172,10 +172,7 @@ function refreshToken(cb) {
       if (data.expires_in)
         set(STORE.EXPIRES_AT, String(Math.floor(Date.now() / 1000) + data.expires_in));
       if (data.vcc_api_key) set(STORE.VCC_API_KEY, data.vcc_api_key);
-      console.log(
-        'Token refreshed. RT: ' +
-          (data.refresh_token ? data.refresh_token.substring(0, 8) + '...' : 'NONE')
-      );
+      console.log('Token refreshed');
       callbacks.forEach(function (callback) {
         callback(true);
       });
@@ -308,11 +305,6 @@ function pollPairing() {
 
 function saveAuth(data) {
   stopPairing();
-  console.log('Auth payload keys: ' + Object.keys(data).join(', '));
-  console.log(
-    'VCC_API_KEY present: ' +
-      (data.VCC_API_KEY ? 'yes (' + data.VCC_API_KEY.substring(0, 8) + '...)' : 'NO')
-  );
   set(STORE.ACCESS_TOKEN, data.ACCESS_TOKEN);
   if (data.REFRESH_TOKEN) set(STORE.REFRESH_TOKEN, data.REFRESH_TOKEN);
   if (data.EXPIRES_IN)
@@ -650,18 +642,6 @@ function executeCommand(command) {
     var now = Math.floor(Date.now() / 1000);
     var remaining = isNaN(expiresAt) ? NaN : expiresAt - now;
     var needsRefresh = isNaN(remaining) || remaining < 60;
-    console.log(
-      'Manual refresh. RT: ' +
-        (refresh ? refresh.substring(0, 8) + '...' : 'NONE') +
-        ' | Token ' +
-        (isNaN(remaining)
-          ? 'N/A'
-          : remaining > 0
-            ? 'valid (' + remaining + 's left)'
-            : 'EXPIRED (' + -remaining + 's ago)') +
-        ' | Refresh ' +
-        (needsRefresh ? 'NEEDED' : 'not needed')
-    );
     if (needsRefresh && refresh) {
       refreshToken(function (ok) {
         if (ok) {
@@ -771,19 +751,7 @@ Pebble.addEventListener('ready', function () {
   if (info) send({ CAR_INFO: info });
 
   if (tokenExpired()) {
-    var refresh = get(STORE.REFRESH_TOKEN);
-    var expiresAt = parseInt(get(STORE.EXPIRES_AT), 10);
-    var now = Math.floor(Date.now() / 1000);
-    console.log(
-      'Token expired on launch. RT: ' + (refresh ? refresh.substring(0, 8) + '...' : 'NONE')
-    );
-    console.log(
-      'Expires: ' +
-        (isNaN(expiresAt) ? 'N/A' : new Date(expiresAt * 1000).toISOString()) +
-        ' (remaining: ' +
-        (expiresAt - now) +
-        's)'
-    );
+    console.log('Token expired on launch, refreshing');
     send({ STATUS_MSG: 'Refreshing...' });
     refreshToken(function () {
       sendStatus();

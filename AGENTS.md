@@ -257,7 +257,6 @@ See `doc/api.md` for full endpoint reference. The complete Connected Vehicle API
 - AppMessage requires queue pattern (only one message in flight at a time)
 - Sideloading clears PebbleKit JS localStorage — requires re-login during development
 - Volvo access tokens last ~5 min; refresh threshold is 60s before expiry
-- Investigating: occasional re-login needed after ~1h idle (diagnostic logs in place)
 - Volvo login is blank inside the Pebble settings webview on Android with the plugins preview: `realm_guard.js` deletes `customElements` ([coredevices/mobileapp#507](https://github.com/coredevices/mobileapp/issues/507), fixed in the next Pebble app release). Browser login (#4) works around it. Core Devices plans a `Pebble.oauth()` API; `Pebble.webSignIn` is limited to their own store apps.
 - **Network domains must be declared** in `package.json` → `pebble.usesPermissions` (`Internet` + `domains`, each covering its subdomains). The Core Devices Pebble app treats `manifestVersion >= 2` apps (SDK 4.44 builds) as permission-declaring: PebbleKit JS and the settings webview may only reach declared/approved domains. The settings webview never prompts; undeclared hosts get a silent 403 (blank Volvo login page, `Failed to fetch`). Adding a new host (new Lambda URL, auth page domain, Volvo host) means adding it here and releasing a new version. Diagnose with `ReVolverAuth-dev/diag.html` (linked as "Diagnostics" in the auth page footer).
 
