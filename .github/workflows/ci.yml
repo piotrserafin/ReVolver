@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: JS tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Run tests
+        run: npm test
+
+  build:
+    name: Build (all platforms)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      # Same setup as release.yml, so a green PR means the release build works.
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nodejs npm libsdl2-2.0-0 libglib2.0-0 libpixman-1-0 zlib1g libsndio7.0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.3.2
+
+      - name: Install Pebble Tool
+        run: uv tool install pebble-tool
+
+      - name: Install Pebble SDK
+        run: pebble sdk install latest
+
+      - name: Build dev
+        run: REVOLVER_ENV=dev pebble build
+
+      - name: Build prod
+        run: pebble build
+
+      - name: Check prod build
+        run: |
+          set -e
+          platforms=$(python3 -c 'import json; print(" ".join(json.load(open("package.json"))["pebble"]["targetPlatforms"]))')
+          for p in $platforms; do
+            unzip -l build/ReVolver.pbw | grep -q " $p/pebble-app.bin$" || { echo "::error::$p missing from ReVolver.pbw"; exit 1; }
+          done
+          js=$(unzip -p build/ReVolver.pbw pebble-js-app.js)
+          if echo "$js" | grep -qE 'ReVolverAuth-dev|ckcflhkgzt3p6lsxad5uvxom740fkwbr'; then
+            echo "::error::dev URL in prod build"; exit 1
+          fi
+          echo "$js" | grep -q '"ENV": "prod"' || { echo "::error::prod build is not ENV=prod"; exit 1; }
+          echo "OK: $platforms, prod URLs only"

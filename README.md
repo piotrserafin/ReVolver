@@ -71,6 +71,7 @@ resources/images/        App icon and screenshots
 ```bash
 pebble build                        # Build for all platforms
 pebble install --emulator basalt    # Install on emulator
+npm test                            # JS tests (no build needed)
 ```
 
 ## Setup
