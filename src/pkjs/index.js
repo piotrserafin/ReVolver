@@ -9,6 +9,64 @@ var env = require('./env');
 var AUTH_LINK_PLACEHOLDER = '{{AUTH_URL}}';
 var CLAY_TEMPLATE = JSON.stringify(clayConfig);
 
+// Runs on the settings page (serialized by Clay: no closures, ES5 only).
+// Phase 3 spike: does Pebble.openUrl work on the Clay page?
+function clayCustomFn() {
+  var clayConfig = this;
+  clayConfig.on(clayConfig.EVENTS.AFTER_BUILD, function () {
+    var btn = clayConfig.getItemById('navigate');
+    var result = clayConfig.getItemById('navigateResult');
+    var car = clayConfig.meta.userData.car;
+    if (!btn || !car) return;
+    var url =
+      'https://www.google.com/maps/dir/?api=1&destination=' +
+      car.lat +
+      ',' +
+      car.lon +
+      '&travelmode=walking';
+    btn.on('click', function () {
+      var P = window.Pebble;
+      if (!(P && typeof P.openUrl === 'function')) {
+        result.set('Pebble.openUrl not available here');
+        return;
+      }
+      result.set('Opening Maps...');
+      try {
+        Promise.resolve(P.openUrl(url)).then(
+          function (opened) {
+            result.set(opened === false ? 'Not opened (openUrl returned false)' : '');
+          },
+          function (e) {
+            result.set('openUrl failed: ' + e);
+          }
+        );
+      } catch (e) {
+        result.set('openUrl threw: ' + e);
+      }
+    });
+  });
+}
+
+// "Find car" section, only when Find car has seen the car's position.
+function navigateSection(car) {
+  var when = car.ts ? new Date(car.ts) : null;
+  return {
+    type: 'section',
+    items: [
+      { type: 'heading', defaultValue: 'Find car' },
+      {
+        type: 'text',
+        defaultValue:
+          'Walking directions in Google Maps to where the car was' +
+          (when ? ' at ' + when.toLocaleString() : '') +
+          '.'
+      },
+      { type: 'button', id: 'navigate', primary: true, defaultValue: 'Walk to car in Maps' },
+      { type: 'text', id: 'navigateResult', defaultValue: '' }
+    ]
+  };
+}
+
 function buildClay(authUrl) {
   var config = JSON.parse(CLAY_TEMPLATE);
   config.forEach(function (section) {
@@ -21,7 +79,15 @@ function buildClay(authUrl) {
       }
     });
   });
-  return new Clay(config, null, { autoHandleEvents: false });
+  var car = null;
+  try {
+    car = JSON.parse(localStorage.getItem('revolver_car_location'));
+  } catch (e) {}
+  if (car) config.splice(1, 0, navigateSection(car));
+  var c = new Clay(config, clayCustomFn, { autoHandleEvents: false });
+  // options.userData only reaches the page when Clay handles the events itself.
+  c.meta.userData = { car: car };
+  return c;
 }
 
 var clay = buildClay(env.AUTH_URL);
@@ -68,7 +134,8 @@ var STORE = {
   CAR_INFO: 'revolver_car_info',
   AVAILABLE_COMMANDS: 'revolver_commands',
   ENERGY_CAPABLE: 'revolver_energy_capable',
-  PAIRING: 'revolver_pairing'
+  PAIRING: 'revolver_pairing',
+  CAR_LOCATION: 'revolver_car_location' // last {lat, lon, ts} seen by Find car (settings "Walk to car")
 };
 
 // Storage
@@ -857,6 +924,7 @@ function findCarStart() {
     volvoGet(LOCATION_API + '/vehicles/' + vin + '/location', function (resp, status) {
       if (findSession !== session) return;
       session.car = resp && parseCarLocation(resp);
+      if (session.car) set(STORE.CAR_LOCATION, JSON.stringify(session.car));
       if (!session.car) {
         // 403: token from a login before location:read was added to the Volvo app
         if (status === 403) session.error = 'Log in again to enable';
@@ -909,6 +977,14 @@ function findCarStart() {
   );
 }
 
+// SELECT in the watch's Find car window. PebbleKit JS can't open Maps (Pebble.openURL only
+// works while the settings page is opening), so point to the settings button instead.
+function findOnPhoneHint() {
+  if (typeof Pebble.showToast === 'function') {
+    Pebble.showToast('Open ReVolver settings, then tap "Walk to car in Maps"');
+  }
+}
+
 function findCarStop() {
   if (!findSession) return;
   if (findSession.watchId !== null) navigator.geolocation.clearWatch(findSession.watchId);
@@ -947,6 +1023,7 @@ Pebble.addEventListener('appmessage', function (e) {
     console.log('Command: ' + cmd);
     if (cmd === 'find:start') findCarStart();
     else if (cmd === 'find:stop') findCarStop();
+    else if (cmd === 'find:phone') findOnPhoneHint();
     else executeCommand(cmd);
   }
 });
@@ -991,6 +1068,7 @@ Pebble.addEventListener('webviewclosed', function (e) {
         clear(STORE.CAR_INFO);
         clear(STORE.AVAILABLE_COMMANDS);
         clear(STORE.ENERGY_CAPABLE);
+        clear(STORE.CAR_LOCATION);
       }
     }
     var vibrate = settingValue(dict, 'VIBRATE');

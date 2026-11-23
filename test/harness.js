@@ -16,6 +16,7 @@ var current = null; // state of the most recent load(), read by the stubs below
 
 var STUBS = {
   '@rebble/clay': function Clay() {
+    this.meta = { userData: {} };
     this.generateUrl = function () { return ''; };
     this.getSettings = function () { return current.settings; };
   },

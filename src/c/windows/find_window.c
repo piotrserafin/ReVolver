@@ -19,6 +19,12 @@ static char s_note[32];
 static char s_msg[64];
 static int s_bearing = -1;  // degrees clockwise from north to the car, -1 = none
 
+// SELECT: how to get walking directions on the phone. The watch can't open anything on the
+// phone (Pebble.openURL only works from the settings page), so it tells you where to tap.
+#define FIND_HINT_MS 6000
+static const char *FIND_HINT = "On your phone:\nReVolver settings\n> Walk to car";
+static AppTimer *s_hint_timer;  // non-NULL while the hint is shown
+
 #if defined(PBL_COMPASS)
 // Arrow pointing at the car: bearing relative to where the top of the watch faces.
 // Uses magnetic north (declination ignored: a few degrees in Europe).
@@ -71,11 +77,12 @@ static const char *direction_for(int deg) {
 static void refresh_layers(void) {
   if (!s_window)
     return;
-  bool msg = s_msg[0] != '\0';
+  bool hint = s_hint_timer != NULL;
+  bool msg = hint || s_msg[0] != '\0';
   bool arrow = false;
   const char *note = s_note;
 #if defined(PBL_COMPASS)
-  arrow = show_arrow();
+  arrow = !hint && show_arrow();
   if (!msg && s_bearing >= 0 && s_heading.compass_status == CompassStatusDataInvalid)
     note = "Move your wrist";  // compass calibrating; direction text meanwhile
   layer_set_hidden(s_arrow_layer, !arrow);
@@ -84,7 +91,9 @@ static void refresh_layers(void) {
   text_layer_set_text(s_dir_layer, s_dir);
   text_layer_set_text(s_dist_layer, s_dist);
   text_layer_set_text(s_note_layer, note);
-  text_layer_set_text(s_msg_layer, s_msg);
+  text_layer_set_text(s_msg_layer, hint ? FIND_HINT : s_msg);
+  text_layer_set_font(s_msg_layer,
+                      fonts_get_system_font(hint ? FONT_KEY_GOTHIC_18_BOLD : FONT_KEY_GOTHIC_24_BOLD));
   layer_set_hidden(text_layer_get_layer(s_dir_layer), msg || arrow);
   layer_set_hidden(text_layer_get_layer(s_dist_layer), msg);
   layer_set_hidden(text_layer_get_layer(s_note_layer), msg);
@@ -100,6 +109,23 @@ static TextLayer *make_text(Layer *root, GRect frame, const char *font_key, GCol
   text_layer_set_overflow_mode(t, GTextOverflowModeWordWrap);
   layer_add_child(root, text_layer_get_layer(t));
   return t;
+}
+
+static void hint_done(void *ctx) {
+  s_hint_timer = NULL;
+  refresh_layers();
+}
+
+static void on_select(ClickRecognizerRef ref, void *ctx) {
+  if (s_hint_timer)
+    app_timer_cancel(s_hint_timer);
+  s_hint_timer = app_timer_register(FIND_HINT_MS, hint_done, NULL);
+  refresh_layers();
+  messaging_send_command("find:phone");  // phone shows the same hint as a toast
+}
+
+static void click_config(void *ctx) {
+  window_single_click_subscribe(BUTTON_ID_SELECT, on_select);
 }
 
 static void window_load(Window *w) {
@@ -140,11 +166,16 @@ static void window_load(Window *w) {
   compass_service_subscribe(on_heading);
   compass_service_set_heading_filter(DEG_TO_TRIGANGLE(FIND_HEADING_FILTER_DEG));
 #endif
+  window_set_click_config_provider(w, click_config);
   refresh_layers();
 }
 
 static void window_unload(Window *w) {
   messaging_send_command("find:stop");
+  if (s_hint_timer) {
+    app_timer_cancel(s_hint_timer);
+    s_hint_timer = NULL;
+  }
 #if defined(PBL_COMPASS)
   compass_service_unsubscribe();
   gpath_destroy(s_arrow_path);

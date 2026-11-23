@@ -133,7 +133,9 @@ SELECT → ActionMenu → pick command → status shows "Sending..."
 Settings → Quick Launch picks one action (no Unlock). Opened from a Quick Launch button, the app sends it as soon as PebbleKit JS is up (first inbox message), with no confirmation; "Phone not ready" after 10 s. Launch `STATUS_MSG`s are ignored until the result has been shown. BACK closes the app before the send.
 
 ### Find Car
-Window opens → `find:start`. JS fetches the car position once (`GET https://api.volvocars.com/location/v1/vehicles/{vin}/location`, scope `location:read`; 403 → "Log in again to enable") and watches phone GPS (`navigator.geolocation.watchPosition`, `Location` permission in `usesPermissions`). Haversine distance + bearing, sent at most every 2 s, only on change. Within max(30 m, GPS accuracy) → "You're close". Window closes → `find:stop` → `clearWatch`. Locations never leave the phone.
+Window opens → `find:start`. JS fetches the car position once (`GET https://api.volvocars.com/location/v1/vehicles/{vin}/location`, scope `location:read`; 403 → "Log in again to enable") and watches phone GPS (`navigator.geolocation.watchPosition`, `Location` permission in `usesPermissions`). Haversine distance + bearing, sent at most every 2 s, only on change. Within max(30 m, GPS accuracy) → "You're close". Window closes → `find:stop` → `clearWatch`. Locations never leave the phone, except when the user taps "Walk to car in Maps".
+
+Walking directions (phase 3): the car's last position is saved in `revolver_car_location`; with it, the settings page gets a "Find car" section whose button calls `Pebble.openUrl` (Google Maps, `travelmode=walking`) from a Clay custom function (`clayCustomFn`, data via `clay.meta.userData`). The watch can't open anything on the phone: `Pebble.openURL` from PebbleKit JS is dropped by the Core Devices app unless the settings page is being opened (checked in its source 2026-11-23). SELECT in the Find car window shows where to tap instead.
 Compass (`#if defined(PBL_COMPASS)`, not diorite): arrow rotated by `bearing + magnetic_heading` (`magnetic_heading` grows counter-clockwise; magnetic north, declination ignored), 5° heading filter, subscribed only while the window is open. Uncalibrated (`CompassStatusDataInvalid`) → direction text + "Move your wrist". Emulator: `pebble emu-compass --calibrated --heading N` delivers only the first event after subscribe.
 
 ### Vibration Feedback (configurable via Clay)
@@ -175,7 +177,7 @@ var COMMANDS = {
 | `AVAILABLE_CMDS` | 10007 | JS → Watch | int | Bitmask of supported commands |
 | `QUICK_ACTION` | 10008 | JS → Watch | string | `COMMAND` string to run on Quick Launch; `none` = off. Persisted on watch. |
 | `QUICK_EXIT` | 10009 | JS → Watch | int | 1 = close the app 3 s after the quick action result. Persisted on watch. |
-| `FIND_CAR` | 10010 | JS → Watch | string | `distance\|bearing\|note` (e.g. "350 m\|45\|seen 5 min ago", bearing -1 = none) or `!message`. Started/stopped by `COMMAND` `find:start` / `find:stop`. |
+| `FIND_CAR` | 10010 | JS → Watch | string | `distance\|bearing\|note` (e.g. "350 m\|45\|seen 5 min ago", bearing -1 = none) or `!message`. Started/stopped by `COMMAND` `find:start` / `find:stop`; `find:phone` (SELECT) → phone toast pointing to the settings button. |
 
 ### Command Bit Flags (C defines, must match JS COMMANDS[].bit)
 

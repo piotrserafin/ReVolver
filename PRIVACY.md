@@ -28,6 +28,7 @@ phone collects them (see below).
 | Refresh token | Phone (PebbleKit JS) |
 | VIN | Phone + watch |
 | Car status | Phone + watch |
+| Car's last parked position (Find car) | Phone |
 
 Tokens are not kept on any server. When you log in inside the Pebble app's
 settings page, they pass through the Lambda in transit and go straight to your
@@ -56,9 +57,13 @@ BMW, etc.) that requires a server-side secret.
 
 "Find car" reads your car's parked position from Volvo and your phone's
 location (only while the Find car screen is open), then works out the distance
-and direction on your phone. Neither location is sent to the ReVolver server or
-stored. The Pebble app asks for the location permission; ReVolver works without
-it, only Find car doesn't.
+and direction on your phone. Neither location is sent to the ReVolver server.
+Your phone's location is not stored; the car's last position is kept on your
+phone (deleted when you change the VIN) for the "Walk to car in Maps" button in
+ReVolver settings. Tapping that button opens Google Maps with the car's
+position as the destination, so that position goes to Google. The Pebble app
+asks for the location permission; ReVolver works without it, only Find car
+doesn't.
 
 ## Open source
 

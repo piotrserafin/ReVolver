@@ -339,7 +339,7 @@ SELECT → ActionMenu → "Find car"
 
 1. **Distance + direction text, every watch.** Car location, phone GPS, distance, 8-point direction (N, NE, …), age of the car's position. No compass needed; this is the main value.
 2. **Compass arrow** on watches with `PBL_COMPASS`: arrow angle = bearing − heading, `GPath` arrow, heading filter ~5°. Others stay on phase 1.
-3. **Navigate on the phone (spike):** a "Navigate to car" button on the settings page calling `Pebble.openUrl("https://www.google.com/maps/dir/?api=1&destination=<lat>,<lon>&travelmode=walking")` (Android opens Maps). Check whether `Pebble.openUrl` works on the Clay page; otherwise a small page on the auth site.
+3. **Navigate on the phone:** built. Settings page "Walk to car in Maps" button (`Pebble.openUrl` works on the Clay page, tested 2026-11-23). Can't be started from the watch: the Core Devices app drops `Pebble.openURL` calls from PebbleKit JS outside the settings flow, so SELECT in the Find car window shows a hint (plus a phone toast). Original plan: a "Navigate to car" button on the settings page calling `Pebble.openUrl("https://www.google.com/maps/dir/?api=1&destination=<lat>,<lon>&travelmode=walking")` (Android opens Maps). Check whether `Pebble.openUrl` works on the Clay page; otherwise a small page on the auth site.
 
 ### Changes
 
@@ -376,5 +376,5 @@ SELECT → ActionMenu → "Find car"
 ### Open questions
 
 - ~~Which watches have a compass?~~ `PBL_COMPASS`: aplite, basalt, chalk, emery (and flint, gabbro); not diorite.
-- Does `Pebble.openUrl` work on the Clay settings page (phase 3)?
+- ~~Does `Pebble.openUrl` work on the Clay settings page (phase 3)?~~ Yes (2026-11-23).
 - Show the car's heading (`properties`) too, e.g. "parked facing N"? Probably not worth the space.
