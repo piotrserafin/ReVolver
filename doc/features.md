@@ -8,7 +8,7 @@ Planned features, one section each. Status: `planned` → `in progress` → `don
 | 2 | [Volvo ID → Keycloak migration](#2-volvo-id--keycloak-migration) | done (2026-11-17) | Volvo announcement — **deadline 2027-01-31**; old-app cleanup after the deadline |
 | 3 | [Dev environment (dev credentials + endpoint)](#3-dev-environment) | done | Development need |
 | 4 | [Browser login with pairing](#4-browser-login-with-pairing) | done (v1.2.0) | Volvo login page blank in the Pebble settings webview ([mobileapp#507](https://github.com/coredevices/mobileapp/issues/507)) |
-| 5 | [Find my car](#5-find-my-car) | in progress | User request — needs `location:read` (prod has it since #2) |
+| 5 | [Find my car](#5-find-my-car) | done (v1.4.0) | User request — needs `location:read` (prod has it since #2) |
 
 ---
 
@@ -304,7 +304,7 @@ The in-webview login stays as a fallback ("Log in here instead"), so it works ag
 
 ## 5. Find my car
 
-**Status:** in progress (`feature/find-car`). Phase 1 built (node simulation 17 checks, emulator, phone: permission/location-off messages confirmed). Phase 2 built: compass arrow on aplite/basalt/chalk/emery (diorite has no compass → direction text), "Move your wrist" while uncalibrated; emulator only delivers the first heading event per launch, so the rotation direction still needs a real-watch check. Changes from the plan below: no `CMD_FIND_CAR` bit ("Find car" always shows; 403 → "Log in again to enable"), no "car is driving" check yet (the position age is shown instead). `location:read` is in prod since the #2 switch (2026-11-17).
+**Status:** done (PR #9), released in v1.4.0. Phase 1 (distance, direction, position age) and phase 2 (compass arrow on aplite/basalt/chalk/emery/flint/gabbro; diorite has no compass → direction text, "Move your wrist" while uncalibrated) tested on a watch. Phase 3: "Walk to car in Maps" button in settings (tested 2026-11-23); SELECT in the Find car window shows where to tap, since the watch can't open the phone's browser. Changes from the plan below: no `CMD_FIND_CAR` bit ("Find car" always shows; 403 → "Log in again to enable"), no "car is driving" check yet (the position age is shown instead).
 
 ### Goal
 
