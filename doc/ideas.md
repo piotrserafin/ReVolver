@@ -12,9 +12,6 @@ The ReVolver entry in the watch launcher shows e.g. "Locked · 28L (240km)" with
 ### Car picker instead of typing the VIN
 `GET /vehicles` lists the account's cars. Settings offer a picker instead of a VIN text field. Prepares for multiple cars.
 
-### Lock with reduced guard
-`POST /vehicles/{vin}/commands/lock-reduced-guard`: lock without interior motion/tilt sensors (pet or bag left in the car). One more command bit and menu entry, only when the car supports it (`/commands`).
-
 ### Odometer and trip stats
 Second screen (DOWN): odometer (`/odometer`), average fuel consumption and trip meters (`/statistics`, already fetched for range).
 

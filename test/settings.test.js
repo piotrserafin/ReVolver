@@ -50,9 +50,9 @@ test('quick action and exit flag sent to the watch', function () {
 });
 
 test('cached commands → bitmask, unknown names ignored', function () {
-  var s = h.load({ store: h.loggedIn({ revolver_commands: JSON.stringify(['flash', 'lock', 'engine-start', 'unknown']) }) });
+  var s = h.load({ store: h.loggedIn({ revolver_commands: JSON.stringify(['flash', 'lock', 'lock-reduced-guard', 'engine-start', 'unknown']) }) });
   return s.fire('ready', undefined, 6).then(function () {
-    assert.ok(s.sent.some(function (m) { return m.AVAILABLE_CMDS === (0x01 | 0x08 | 0x80); }),
+    assert.ok(s.sent.some(function (m) { return m.AVAILABLE_CMDS === (0x01 | 0x08 | 0x80 | 0x200); }),
       JSON.stringify(s.sent.filter(function (m) { return 'AVAILABLE_CMDS' in m; })));
   });
 });
