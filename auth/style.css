@@ -77,6 +77,32 @@ body {
 .page-auth .error { margin: 24px auto; }
 .page-auth .guide-link { display: block; margin-top: 32px; font-size: 12px; color: var(--fg-dim); }
 .page-auth .guide-link a { color: var(--accent); }
+.page-auth .warn { margin: 24px auto; max-width: 400px; font-size: 13px; color: var(--fg); }
+.page-auth .confirm-code {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 40px;
+  font-weight: 700;
+  letter-spacing: 6px;
+  margin: 24px 0 8px;
+  color: var(--fg-code);
+  user-select: all;
+}
+.page-auth .confirm-input {
+  display: block;
+  margin: 16px auto 0;
+  width: 220px;
+  box-sizing: border-box;
+  padding: 12px;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 28px;
+  letter-spacing: 4px;
+  text-align: center;
+  text-transform: uppercase;
+  background: var(--bg-card);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
 .page-auth .alt-login { display: block; margin-top: 16px; font-size: 13px; color: var(--accent); }
 
 /* Spinner */

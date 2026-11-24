@@ -22,6 +22,7 @@ ReVolver — **Re**mote **Vol**vo controll**er**. A Pebble smartwatch applicatio
 pebble build                             # Build for all platforms
 pebble clean                             # Clean build artifacts
 npm test                                 # JS tests (Node, no build or SDK needed)
+python3 -m unittest discover -s infra/lambda -p 'test_*.py'   # Lambda pairing tests (no AWS)
 pebble install --emulator basalt         # Install on emulator
 pebble screenshot --scale 6 --no-open screenshot.png  # Screenshot
 ```
@@ -100,7 +101,7 @@ infra/
 ## App Flow
 
 No sequence diagrams yet. Main flows:
-- First launch: no tokens → settings → browser login (pairing) → "Logged in!" → ready
+- First launch: no tokens → settings → browser login (pairing) → code from the browser typed into the settings page → "Logged in!" → ready
 - Subsequent launch: cached data shown at once, token refreshed if needed (see Token Refresh)
 - Command execution: see Command Flow; 401 → refresh + retry once
 
@@ -200,7 +201,7 @@ OAuth2 PKCE flow with Volvo ID on Volvo's Keycloak (`auth.volvocars.com`, `vid-d
 
 See `infra/lambda/README.md` for why Lambda is required.
 
-**Current:** GitHub Pages frontend (source in `auth/`, synced to the `ReVolverAuth` repo by `deploy-auth.yml`) + Lambda proxy. Default login runs in the phone's browser and hands tokens to PebbleKit JS through a DynamoDB pairing item (`doc/features.md` #4). Keycloak migration done 2026-11-17 (#2); old Volvo ID endpoints stay as a rollback until 2027-01-31. Device flow is disabled for `vid-dc-` clients.
+**Current:** GitHub Pages frontend (source in `auth/`, synced to the `ReVolverAuth` repo by `deploy-auth.yml`) + Lambda proxy. Default login runs in the phone's browser and hands tokens to PebbleKit JS through a DynamoDB pairing item (`doc/features.md` #4), released only after the user types the 6-character code shown in the browser into the settings page (`pair_confirm`). Keycloak migration done 2026-11-17 (#2); old Volvo ID endpoints stay as a rollback until 2027-01-31. Device flow is disabled for `vid-dc-` clients.
 
 **Deploys are automatic:** merging to `main` deploys the Lambda (`infra/**`) and the auth page (`auth/**`). Treat a merge touching those paths as a deploy.
 
