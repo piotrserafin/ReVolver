@@ -294,7 +294,7 @@ class ConfigAndErrorsTest(unittest.TestCase):
         self._orig_boto3 = sys.modules.get("boto3")
         sys.modules["boto3"] = fake_boto3
         tx._config, tx._config_expires = {}, 0
-        self._orig_urlopen = tx.urllib.request.urlopen
+        self._orig_open = tx._open
         self.logs = []
         self._orig_print = tx.print if hasattr(tx, "print") else None
         tx.print = lambda line: self.logs.append(json.loads(line))
@@ -304,7 +304,7 @@ class ConfigAndErrorsTest(unittest.TestCase):
             sys.modules.pop("boto3", None)
         else:
             sys.modules["boto3"] = self._orig_boto3
-        tx.urllib.request.urlopen = self._orig_urlopen
+        tx._open = self._orig_open
         del tx.print
         tx._config, tx._config_expires = {}, 0
 
@@ -324,10 +324,9 @@ class ConfigAndErrorsTest(unittest.TestCase):
                                       "params": ["allowed-origins"]}])
 
     def volvo_fails(self, exc):
-        def urlopen(req, timeout=None):
-            self.assertEqual(timeout, tx.VOLVO_TIMEOUT_SECONDS)
+        def fake_open(req):
             raise exc
-        tx.urllib.request.urlopen = urlopen
+        tx._open = fake_open
         return post(grant_type="refresh_token", refresh_token="tok.en")
 
     def test_network_error_hides_reason(self):
@@ -336,7 +335,8 @@ class ConfigAndErrorsTest(unittest.TestCase):
         self.assertEqual(status, 502)
         self.assertEqual(data["error"], "network_error")
         self.assertNotIn("getaddrinfo", json.dumps(data))
-        self.assertEqual(self.logs[-1]["event"], "volvo_network_error")
+        self.assertEqual([l["event"] for l in self.logs], ["volvo_network_error", "volvo_call"])
+        self.assertEqual(self.logs[-1]["kind"], "refresh_token")
 
     def test_timeout(self):
         self.assertEqual(self.volvo_fails(TimeoutError())[0], 504)
