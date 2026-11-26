@@ -125,7 +125,8 @@ class ReVolverAuthStack(Stack):
             runtime=lambda_.Runtime.PYTHON_3_12,
             handler="token_exchange.lambda_handler",
             memory_size=128,
-            timeout=Duration.seconds(10),
+            # Volvo token calls take 5-7 s from here; VOLVO_TIMEOUT_SECONDS is 12.
+            timeout=Duration.seconds(15),
             role=lambda_role,
             log_group=log_group,
             function_name=f"{stack.stack_name}-token-exchange",

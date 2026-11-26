@@ -37,6 +37,7 @@ import os
 import re
 import time
 import base64
+import http.client
 import hashlib
 import hmac
 import secrets
@@ -71,8 +72,10 @@ CONFIG_TTL_SECONDS = 300
 # Without these the Lambda refuses to work instead of falling back to defaults.
 REQUIRED_CONFIG = ("client-id", "client-secret", "vcc-api-key", "redirect-uri",
                    "allowed-origins", "scopes")
-# Below the Lambda's 10 s timeout, so a slow Volvo gets a clean 504.
-VOLVO_TIMEOUT_SECONDS = 8
+# Below the Lambda's 15 s timeout, so a slow Volvo gets a clean 504.
+# Token calls from the Lambda take 5-7 s today (p90 5.7 s, max 6.8 s; Volvo
+# itself answers in ~0.3 s), see "volvo_call" timings in the log.
+VOLVO_TIMEOUT_SECONDS = 12
 
 _config = {}
 _config_expires = 0.0
@@ -323,7 +326,69 @@ def call_token_endpoint(body):
     return cors_response(status, data)
 
 
+# ─── Volvo call timing ───────────────────────────────────────────────────────
+# Phases of the last Volvo call (ms), logged as "volvo_call". Measured inside
+# the one connection urllib makes, so no extra DNS lookups or requests.
+_timing = {}
+
+
+def _ms(start):
+    return round((time.monotonic() - start) * 1000)
+
+
+class _TimedHTTPSConnection(http.client.HTTPSConnection):
+    """Same steps as socket.create_connection + TLS, with each one timed."""
+
+    def connect(self):
+        t = time.monotonic()
+        infos = socket.getaddrinfo(self.host, self.port, 0, socket.SOCK_STREAM)
+        _timing["dns_ms"] = _ms(t)
+        _timing["addrs"] = "".join("6" if i[0] == socket.AF_INET6 else "4" for i in infos)
+        sock, err, failed = None, None, []
+        t = time.monotonic()
+        for family, socktype, proto, _, addr in infos:
+            sock = socket.socket(family, socktype, proto)
+            sock.settimeout(self.timeout)
+            try:
+                sock.connect(addr)
+                break
+            except OSError as e:
+                failed.append(("6" if family == socket.AF_INET6 else "4") + ":" + type(e).__name__)
+                sock.close()
+                err, sock = e, None
+        _timing["connect_ms"] = _ms(t)
+        if failed:
+            _timing["connect_failed"] = failed
+        if sock is None:
+            raise err or OSError("no address")
+        t = time.monotonic()
+        self.sock = self._context.wrap_socket(sock, server_hostname=self.host)
+        _timing["tls_ms"] = _ms(t)
+
+
+class _TimedHTTPSHandler(urllib.request.HTTPSHandler):
+    def https_open(self, req):
+        return self.do_open(_TimedHTTPSConnection, req, context=self._context)
+
+
+_opener = urllib.request.build_opener(_TimedHTTPSHandler())
+
+
+def _open(req):
+    return _opener.open(req, timeout=VOLVO_TIMEOUT_SECONDS)
+
+
 def fetch_tokens(body):
+    """Call Volvo, then log how long each phase took ("volvo_call")."""
+    _timing.clear()
+    start = time.monotonic()
+    try:
+        return _fetch_tokens(body)
+    finally:
+        log("info", "volvo_call", kind=_request_kind, total_ms=_ms(start), **_timing)
+
+
+def _fetch_tokens(body):
     """Call Volvo's token endpoint with Basic auth (secret from SSM).
 
     Returns (status, dict): the token payload on 200, a safe error otherwise.
@@ -346,7 +411,8 @@ def fetch_tokens(body):
     )
 
     try:
-        with urllib.request.urlopen(req, timeout=VOLVO_TIMEOUT_SECONDS) as resp:
+        with _open(req) as resp:
+            _timing["status"] = resp.status
             data = json.loads(resp.read().decode())
             return 200, {
                 "access_token": data.get("access_token"),
@@ -367,6 +433,7 @@ def fetch_tokens(body):
         except Exception:
             err = {"error": "token_error", "detail": "Token exchange failed"}
         # Volvo's error code is safe to log (e.g. invalid_grant); the description isn't needed.
+        _timing["status"] = e.code
         log("warn", "volvo_error", status=e.code, error=str(err["error"])[:64], kind=_request_kind)
         return e.code, err
     except (TimeoutError, socket.timeout):

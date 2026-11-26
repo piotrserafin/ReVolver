@@ -434,6 +434,14 @@ Log group `/revolver/<stack>/token-exchange`, kept 30 days. One JSON line per ev
 | `config_missing` | error | names of the missing SSM parameters |
 | `volvo_error` | warn | HTTP status, Volvo's error code (e.g. `invalid_grant`), request kind |
 | `volvo_timeout`, `volvo_network_error` | warn | exception type, request kind |
+| `volvo_call` | info | after every Volvo token call: `total_ms`, `dns_ms`, `connect_ms`, `tls_ms`, `addrs` (address families in DNS order, e.g. `4466`), `connect_failed` (family + error), `status` |
+
+Find slow phases:
+
+```bash
+aws logs filter-log-events --log-group-name /revolver/ReVolverAuthStack/token-exchange \
+  --filter-pattern '{ $.event = "volvo_call" }' --query 'events[].message' --output text
+```
 
 The old `/aws/lambda/<function>` log groups (no retention) are no longer written to; delete them once the new group has logs.
 
@@ -506,7 +514,7 @@ aws ssm put-parameter --name /revolver-dev/token-endpoint --type String --value 
 | Pairing expired / used | 410 `{"error": "pair_expired"}` (exchange), 404 `{"error": "pair_not_found"}` (poll) |
 | Volvo returns error    | Volvo's status code + sanitized error (no raw body leaked) |
 | Volvo unreachable      | 502 `{"error": "network_error"}` (details only in the log) |
-| Volvo slower than 8 s  | 504 `{"error": "timeout"}`                                 |
+| Volvo slower than 12 s | 504 `{"error": "timeout"}` (Lambda timeout is 15 s)        |
 | Required SSM parameter missing | 503 `{"error": "not_configured"}`                  |
 
 ## Security
