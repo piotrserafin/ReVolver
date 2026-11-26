@@ -1,4 +1,4 @@
-"""Lambda tests: browser-login pairing and input checks. Fake DynamoDB, fake Volvo token endpoint.
+"""Lambda tests: pairing, input checks, config and Volvo errors. Fake DynamoDB, fake Volvo token endpoint.
 
 Run: python3 -m unittest discover -s infra/lambda -p 'test_*.py'
 """
@@ -6,6 +6,7 @@ Run: python3 -m unittest discover -s infra/lambda -p 'test_*.py'
 import json
 import os
 import re
+import sys
 import time
 import unittest
 import urllib.parse
@@ -89,6 +90,10 @@ class FakeDynamo:
         return {"Attributes": item} if ReturnValues == "ALL_OLD" and item else {}
 
 
+CONFIG = {"allowed-origins": "https://piotrserafin.github.io", "client-id": "x",
+          "client-secret": "s", "vcc-api-key": "k", "redirect-uri": "https://r",
+          "scopes": "openid"}
+
 TOKENS = {"access_token": "at", "refresh_token": "rt", "expires_in": 300,
           "token_type": "Bearer", "vcc_api_key": "key"}
 
@@ -100,13 +105,18 @@ def post(**params):
     return post_body(urllib.parse.urlencode(params))
 
 
-def post_body(body):
+def post_handler(**params):
+    """Through lambda_handler, with its top-level error handling."""
+    return post_body(urllib.parse.urlencode(params), handler=tx.lambda_handler)
+
+
+def post_body(body, handler=None):
     event = {
         "requestContext": {"http": {"method": "POST"}},
         "headers": {},
         "body": body,
     }
-    resp = tx._handle(event)
+    resp = handler(event, None) if handler else tx._handle(event)
     body = resp["body"]
     return resp["statusCode"], (json.loads(body) if body else None)
 
@@ -118,7 +128,8 @@ class LambdaTest(unittest.TestCase):
         self.db = FakeDynamo()
         self.volvo_calls = 0
         tx._dynamodb = self.db
-        tx._config = {"allowed-origins": "https://piotrserafin.github.io", "client-id": "x"}
+        tx._config = dict(CONFIG)
+        tx._config_expires = time.time() + 3600
 
         def fake_fetch(body):
             self.volvo_calls += 1
@@ -131,6 +142,7 @@ class LambdaTest(unittest.TestCase):
         tx.fetch_tokens = self._orig_fetch
         tx._dynamodb = None
         tx._config = {}
+        tx._config_expires = 0
 
 
 class PairingTest(LambdaTest):
@@ -258,6 +270,90 @@ class InputChecksTest(LambdaTest):
         status, data = post_body("x" * (2 * tx.MAX_BODY_BYTES + 1))
         self.assertEqual((status, data), (413, {"error": "request_too_large"}))
         self.assertEqual(self.volvo_calls, 0)
+
+
+
+class FakeSSM:
+    def __init__(self, values):
+        self.values = values
+        self.loads = 0
+
+    def get_parameters(self, Names, WithDecryption):
+        self.loads += 1
+        return {"Parameters": [{"Name": n, "Value": self.values[n.split("/")[-1]]}
+                               for n in Names if n.split("/")[-1] in self.values]}
+
+
+class ConfigAndErrorsTest(unittest.TestCase):
+    """Config cache, fail-closed config, Volvo network errors, safe logs."""
+
+    def setUp(self):
+        self.ssm = FakeSSM(dict(CONFIG))
+        fake_boto3 = type(sys)("boto3")
+        fake_boto3.client = lambda name: self.ssm
+        self._orig_boto3 = sys.modules.get("boto3")
+        sys.modules["boto3"] = fake_boto3
+        tx._config, tx._config_expires = {}, 0
+        self._orig_urlopen = tx.urllib.request.urlopen
+        self.logs = []
+        self._orig_print = tx.print if hasattr(tx, "print") else None
+        tx.print = lambda line: self.logs.append(json.loads(line))
+
+    def tearDown(self):
+        if self._orig_boto3 is None:
+            sys.modules.pop("boto3", None)
+        else:
+            sys.modules["boto3"] = self._orig_boto3
+        tx.urllib.request.urlopen = self._orig_urlopen
+        del tx.print
+        tx._config, tx._config_expires = {}, 0
+
+    def test_config_cached_then_reloaded(self):
+        tx.get_config()
+        tx.get_config()
+        self.assertEqual(self.ssm.loads, 1)
+        tx._config_expires = time.time() - 1
+        tx.get_config()
+        self.assertEqual(self.ssm.loads, 2)
+
+    def test_missing_config_fails_closed(self):
+        del self.ssm.values["allowed-origins"]
+        status, data = post_handler(action="pair_start")
+        self.assertEqual((status, data), (503, {"error": "not_configured"}))
+        self.assertEqual(self.logs, [{"level": "error", "event": "config_missing",
+                                      "params": ["allowed-origins"]}])
+
+    def volvo_fails(self, exc):
+        def urlopen(req, timeout=None):
+            self.assertEqual(timeout, tx.VOLVO_TIMEOUT_SECONDS)
+            raise exc
+        tx.urllib.request.urlopen = urlopen
+        return post(grant_type="refresh_token", refresh_token="tok.en")
+
+    def test_network_error_hides_reason(self):
+        exc = tx.urllib.error.URLError(OSError("getaddrinfo failed for auth.volvocars.com"))
+        status, data = self.volvo_fails(exc)
+        self.assertEqual(status, 502)
+        self.assertEqual(data["error"], "network_error")
+        self.assertNotIn("getaddrinfo", json.dumps(data))
+        self.assertEqual(self.logs[-1]["event"], "volvo_network_error")
+
+    def test_timeout(self):
+        self.assertEqual(self.volvo_fails(TimeoutError())[0], 504)
+        status, _ = self.volvo_fails(tx.urllib.error.URLError(TimeoutError()))
+        self.assertEqual(status, 504)
+
+    def test_unhandled_error_logs_type_only(self):
+        def boom(body):
+            raise ValueError("secret-token-in-message")
+        orig, tx.fetch_tokens = tx.fetch_tokens, boom
+        try:
+            status, data = post_handler(grant_type="refresh_token", refresh_token="tok.en")
+        finally:
+            tx.fetch_tokens = orig
+        self.assertEqual((status, data), (500, {"error": "internal_error"}))
+        self.assertEqual(self.logs, [{"level": "error", "event": "unhandled",
+                                      "error": "ValueError", "kind": "refresh_token"}])
 
 
 if __name__ == "__main__":
