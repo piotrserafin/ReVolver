@@ -55,6 +55,16 @@ CONFIRM_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 CONFIRM_LENGTH = 6
 CONFIRM_MAX_ATTEMPTS = 5
 
+# Cheap checks before anything reaches Volvo, so junk requests don't spend
+# the app's Volvo client credentials. Generous limits: Volvo's codes and
+# tokens are far shorter. Characters: URL-safe base64, JWT dots, RFC 7636.
+MAX_BODY_BYTES = 16 * 1024
+TOKEN_CHARS_RE = re.compile(r"^[A-Za-z0-9._~+/=-]+$")
+MAX_AUTH_CODE_LENGTH = 2048
+MAX_REFRESH_TOKEN_LENGTH = 8192
+# RFC 7636: 43-128 characters from [A-Za-z0-9-._~]
+CODE_VERIFIER_RE = re.compile(r"^[A-Za-z0-9._~-]{43,128}$")
+
 
 _config = {}
 
@@ -142,7 +152,9 @@ def _handle(event):
 
     # POST — token exchange or refresh
     try:
-        body = event.get("body", "")
+        body = event.get("body") or ""
+        if len(body) > 2 * MAX_BODY_BYTES:  # room for base64
+            return cors_response(413, {"error": "request_too_large"})
         if event.get("isBase64Encoded"):
             body = base64.b64decode(body).decode("utf-8")
         params = dict(urllib.parse.parse_qsl(body))
@@ -195,6 +207,10 @@ def handle_auth_code(params):
         return cors_response(400, {"error": "missing_code"})
     if not code_verifier:
         return cors_response(400, {"error": "missing_code_verifier"})
+    if len(code) > MAX_AUTH_CODE_LENGTH or not TOKEN_CHARS_RE.match(code):
+        return cors_response(400, {"error": "invalid_code"})
+    if not CODE_VERIFIER_RE.match(code_verifier):
+        return cors_response(400, {"error": "invalid_code_verifier"})
 
     pair = params.get("pair", "")
     if pair and not PAIR_CODE_RE.match(pair):
@@ -253,6 +269,8 @@ def handle_refresh(params):
 
     if not refresh_token:
         return cors_response(400, {"error": "missing_refresh_token"})
+    if len(refresh_token) > MAX_REFRESH_TOKEN_LENGTH or not TOKEN_CHARS_RE.match(refresh_token):
+        return cors_response(400, {"error": "invalid_refresh_token"})
 
     token_body = urllib.parse.urlencode(
         {

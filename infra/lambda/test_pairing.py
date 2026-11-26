@@ -1,4 +1,4 @@
-"""Browser-login pairing tests: fake DynamoDB, fake Volvo token endpoint.
+"""Lambda tests: browser-login pairing and input checks. Fake DynamoDB, fake Volvo token endpoint.
 
 Run: python3 -m unittest discover -s infra/lambda -p 'test_*.py'
 """
@@ -93,18 +93,27 @@ TOKENS = {"access_token": "at", "refresh_token": "rt", "expires_in": 300,
           "token_type": "Bearer", "vcc_api_key": "key"}
 
 
+VERIFIER = "v" * 64
+
+
 def post(**params):
+    return post_body(urllib.parse.urlencode(params))
+
+
+def post_body(body):
     event = {
         "requestContext": {"http": {"method": "POST"}},
         "headers": {},
-        "body": urllib.parse.urlencode(params),
+        "body": body,
     }
     resp = tx._handle(event)
     body = resp["body"]
     return resp["statusCode"], (json.loads(body) if body else None)
 
 
-class PairingTest(unittest.TestCase):
+class LambdaTest(unittest.TestCase):
+    """Fake DynamoDB and Volvo; counts Volvo token calls."""
+
     def setUp(self):
         self.db = FakeDynamo()
         self.volvo_calls = 0
@@ -123,13 +132,15 @@ class PairingTest(unittest.TestCase):
         tx._dynamodb = None
         tx._config = {}
 
+
+class PairingTest(LambdaTest):
     def start(self):
         status, data = post(action="pair_start")
         self.assertEqual(status, 200)
         return data["code"], data["secret"]
 
     def login(self, code):
-        return post(grant_type="authorization_code", code="c", code_verifier="v", pair=code)
+        return post(grant_type="authorization_code", code="c", code_verifier=VERIFIER, pair=code)
 
     def poll(self, code, secret):
         return post(action="pair_poll", code=code, secret=secret)
@@ -207,6 +218,46 @@ class PairingTest(unittest.TestCase):
     def test_wrong_secret_looks_like_unknown(self):
         code, _ = self.start()
         self.assertEqual(self.poll(code, "nope")[0], 404)
+
+
+
+class InputChecksTest(LambdaTest):
+    """Junk never reaches Volvo."""
+
+    def assertRejected(self, status_and_data, error):
+        self.assertEqual(status_and_data, (400, {"error": error}))
+        self.assertEqual(self.volvo_calls, 0)
+
+    def exchange(self, code="a1b2.c3d4-e5f6", verifier=VERIFIER):
+        return post(grant_type="authorization_code", code=code, code_verifier=verifier)
+
+    def refresh(self, token):
+        return post(grant_type="refresh_token", refresh_token=token)
+
+    def test_valid_requests_pass(self):
+        self.assertEqual(self.exchange()[0], 200)
+        jwt = "eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiIxIn0.c2lnX-_x"
+        self.assertEqual(self.refresh(jwt)[0], 200)
+        self.assertEqual(self.volvo_calls, 2)
+
+    def test_bad_auth_code(self):
+        self.assertRejected(self.exchange(code="a" * 2049), "invalid_code")
+        self.assertRejected(self.exchange(code="abc def"), "invalid_code")
+        self.assertRejected(self.exchange(code="abc&x=1"), "invalid_code")
+
+    def test_bad_code_verifier(self):
+        self.assertRejected(self.exchange(verifier="short"), "invalid_code_verifier")
+        self.assertRejected(self.exchange(verifier="v" * 129), "invalid_code_verifier")
+        self.assertRejected(self.exchange(verifier="v" * 42 + "!"), "invalid_code_verifier")
+
+    def test_bad_refresh_token(self):
+        self.assertRejected(self.refresh("t" * 8193), "invalid_refresh_token")
+        self.assertRejected(self.refresh("tok\nen"), "invalid_refresh_token")
+
+    def test_huge_body(self):
+        status, data = post_body("x" * (2 * tx.MAX_BODY_BYTES + 1))
+        self.assertEqual((status, data), (413, {"error": "request_too_large"}))
+        self.assertEqual(self.volvo_calls, 0)
 
 
 if __name__ == "__main__":
