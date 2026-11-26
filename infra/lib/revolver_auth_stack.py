@@ -124,9 +124,11 @@ class ReVolverAuthStack(Stack):
             ),
             runtime=lambda_.Runtime.PYTHON_3_12,
             handler="token_exchange.lambda_handler",
-            memory_size=128,
-            # Volvo token calls take 5-7 s from here; VOLVO_TIMEOUT_SECONDS is 12.
-            timeout=Duration.seconds(15),
+            # CPU scales with memory. At 128 MB the cold start (boto3 import,
+            # clients, SSM) took ~6 s, on almost every app launch.
+            memory_size=1024,
+            # VOLVO_TIMEOUT_SECONDS (8) fits inside, so a slow Volvo gets a 504.
+            timeout=Duration.seconds(10),
             role=lambda_role,
             log_group=log_group,
             function_name=f"{stack.stack_name}-token-exchange",
