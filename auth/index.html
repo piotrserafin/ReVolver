@@ -231,7 +231,7 @@
       input.autocomplete = 'off';
       input.autocapitalize = 'characters';
       input.spellcheck = false;
-      input.placeholder = 'XXX-XXX';
+      input.placeholder = 'XXXXXX';
       input.setAttribute('aria-label', 'Code from the browser');
       $action.appendChild(input);
 
@@ -346,7 +346,7 @@
           clearAction();
           var codeEl = document.createElement('div');
           codeEl.className = 'confirm-code';
-          codeEl.textContent = data.confirm_code.slice(0, 3) + '-' + data.confirm_code.slice(3);
+          codeEl.textContent = data.confirm_code;
           $action.appendChild(codeEl);
           addInfo('Go back to the Pebble app and type this code in ReVolver settings. ' +
             'It works for a few minutes.');
