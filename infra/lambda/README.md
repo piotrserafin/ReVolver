@@ -424,6 +424,10 @@ The Function URL is public: it ships in every `.pbw`. These cap what a flood can
   - `<stack>-invocations`: more than 1000 (prod) / 200 (dev) requests in an hour.
   - `<stack>-handler-errors`: the handler logged `"level": "error"` (unhandled exception or missing SSM config). The handler catches every exception, so Lambda's own Errors metric stays 0.
 
+### Cold start
+
+1024 MB memory: Lambda's CPU scales with memory, and at 128 MB importing boto3, creating its clients and loading SSM took ~6 s inside the first request of every new instance. With few users, almost every app launch got a new instance. boto3 clients and config now load while the instance starts (`_warm_up`, only when `AWS_LAMBDA_FUNCTION_NAME` is set). Still within the free tier at this traffic.
+
 ### Logs
 
 Log group `/revolver/<stack>/token-exchange`, kept 30 days. One JSON line per event, never request bodies, tokens or secrets:
@@ -434,6 +438,9 @@ Log group `/revolver/<stack>/token-exchange`, kept 30 days. One JSON line per ev
 | `config_missing` | error | names of the missing SSM parameters |
 | `volvo_error` | warn | HTTP status, Volvo's error code (e.g. `invalid_grant`), request kind |
 | `volvo_timeout`, `volvo_network_error` | warn | exception type, request kind |
+| `warm_up` | info | instance start: boto3 clients + SSM config, `ms` |
+| `warm_up_failed` | error | exception type (the first request retries) |
+| `config_load` | info | SSM config (re)load, `ms` |
 | `volvo_call` | info | after every Volvo token call: `total_ms`, `dns_ms`, `connect_ms`, `tls_ms`, `addrs` (address families in DNS order, e.g. `4466`), `connect_failed` (family + error), `status` |
 
 Find slow phases:
@@ -514,7 +521,7 @@ aws ssm put-parameter --name /revolver-dev/token-endpoint --type String --value 
 | Pairing expired / used | 410 `{"error": "pair_expired"}` (exchange), 404 `{"error": "pair_not_found"}` (poll) |
 | Volvo returns error    | Volvo's status code + sanitized error (no raw body leaked) |
 | Volvo unreachable      | 502 `{"error": "network_error"}` (details only in the log) |
-| Volvo slower than 12 s | 504 `{"error": "timeout"}` (Lambda timeout is 15 s)        |
+| Volvo slower than 8 s  | 504 `{"error": "timeout"}` (Lambda timeout is 10 s)        |
 | Required SSM parameter missing | 503 `{"error": "not_configured"}`                  |
 
 ## Security

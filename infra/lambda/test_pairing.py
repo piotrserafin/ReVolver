@@ -293,7 +293,7 @@ class ConfigAndErrorsTest(unittest.TestCase):
         fake_boto3.client = lambda name: self.ssm
         self._orig_boto3 = sys.modules.get("boto3")
         sys.modules["boto3"] = fake_boto3
-        tx._config, tx._config_expires = {}, 0
+        tx._config, tx._config_expires, tx._ssm, tx._dynamodb = {}, 0, None, None
         self._orig_open = tx._open
         self.logs = []
         self._orig_print = tx.print if hasattr(tx, "print") else None
@@ -306,7 +306,21 @@ class ConfigAndErrorsTest(unittest.TestCase):
             sys.modules["boto3"] = self._orig_boto3
         tx._open = self._orig_open
         del tx.print
-        tx._config, tx._config_expires = {}, 0
+        tx._config, tx._config_expires, tx._ssm, tx._dynamodb = {}, 0, None, None
+
+    def test_warm_up_loads_clients_and_config(self):
+        tx._warm_up()
+        self.assertEqual(self.ssm.loads, 1)
+        self.assertIsNotNone(tx._dynamodb)
+        self.assertEqual([l["event"] for l in self.logs], ["config_load", "warm_up"])
+        tx.get_config()
+        self.assertEqual(self.ssm.loads, 1)  # first request reuses it
+
+    def test_warm_up_failure_does_not_raise(self):
+        del self.ssm.values["client-id"]
+        tx._warm_up()
+        self.assertEqual([l["event"] for l in self.logs],
+                         ["config_missing", "warm_up_failed", "warm_up"])
 
     def test_config_cached_then_reloaded(self):
         tx.get_config()
@@ -335,7 +349,8 @@ class ConfigAndErrorsTest(unittest.TestCase):
         self.assertEqual(status, 502)
         self.assertEqual(data["error"], "network_error")
         self.assertNotIn("getaddrinfo", json.dumps(data))
-        self.assertEqual([l["event"] for l in self.logs], ["volvo_network_error", "volvo_call"])
+        self.assertEqual([l["event"] for l in self.logs],
+                         ["config_load", "volvo_network_error", "volvo_call"])
         self.assertEqual(self.logs[-1]["kind"], "refresh_token")
 
     def test_timeout(self):
@@ -352,8 +367,9 @@ class ConfigAndErrorsTest(unittest.TestCase):
         finally:
             tx.fetch_tokens = orig
         self.assertEqual((status, data), (500, {"error": "internal_error"}))
-        self.assertEqual(self.logs, [{"level": "error", "event": "unhandled",
-                                      "error": "ValueError", "kind": "refresh_token"}])
+        errors = [l for l in self.logs if l["level"] == "error"]
+        self.assertEqual(errors, [{"level": "error", "event": "unhandled",
+                                   "error": "ValueError", "kind": "refresh_token"}])
 
 
 if __name__ == "__main__":

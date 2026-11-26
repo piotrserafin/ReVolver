@@ -72,10 +72,9 @@ CONFIG_TTL_SECONDS = 300
 # Without these the Lambda refuses to work instead of falling back to defaults.
 REQUIRED_CONFIG = ("client-id", "client-secret", "vcc-api-key", "redirect-uri",
                    "allowed-origins", "scopes")
-# Below the Lambda's 15 s timeout, so a slow Volvo gets a clean 504.
-# Token calls from the Lambda take 5-7 s today (p90 5.7 s, max 6.8 s; Volvo
-# itself answers in ~0.3 s), see "volvo_call" timings in the log.
-VOLVO_TIMEOUT_SECONDS = 12
+# Below the Lambda's 10 s timeout, so a slow Volvo gets a clean 504.
+# Volvo answers in ~0.3 s ("volvo_call" timings in the log).
+VOLVO_TIMEOUT_SECONDS = 8
 
 _config = {}
 _config_expires = 0.0
@@ -96,12 +95,9 @@ def get_config():
     if _config and time.time() < _config_expires:
         return _config
 
-    import boto3
-
-    ssm = boto3.client("ssm")
+    start = time.monotonic()
     prefix = os.environ.get("SSM_PREFIX", "/revolver")
-
-    resp = ssm.get_parameters(
+    resp = _ssm_client().get_parameters(
         Names=[
             f"{prefix}/client-id",
             f"{prefix}/client-secret",
@@ -128,12 +124,29 @@ def get_config():
 
     _config = config
     _config_expires = time.time() + CONFIG_TTL_SECONDS
+    log("info", "config_load", ms=_ms(start))
     return _config
+
+
+_ssm = None
+
+
+def _ssm_client():
+    global _ssm
+    if _ssm is None:
+        import boto3
+
+        _ssm = boto3.client("ssm")
+    return _ssm
 
 
 # Current request origin and kind (set per invocation; kind is for logs only)
 _request_origin = ""
 _request_kind = ""
+
+
+def _ms(start):
+    return round((time.monotonic() - start) * 1000)
 
 
 # ─── Handler ─────────────────────────────────────────────────────────────────
@@ -330,10 +343,6 @@ def call_token_endpoint(body):
 # Phases of the last Volvo call (ms), logged as "volvo_call". Measured inside
 # the one connection urllib makes, so no extra DNS lookups or requests.
 _timing = {}
-
-
-def _ms(start):
-    return round((time.monotonic() - start) * 1000)
 
 
 class _TimedHTTPSConnection(http.client.HTTPSConnection):
@@ -602,3 +611,23 @@ def cors_response(status_code, body):
         },
         "body": json.dumps(body) if isinstance(body, dict) else body,
     }
+
+
+# ─── Cold start ──────────────────────────────────────────────────────────────
+# Importing boto3, creating its clients and loading config is CPU-heavy (it
+# took ~6 s inside the first request at 128 MB). Do it while Lambda starts the
+# instance instead. Only in Lambda: tests import this module without boto3.
+def _warm_up():
+    start = time.monotonic()
+    try:
+        _ssm_client()
+        _pairing_client()
+        get_config()
+    except Exception as e:
+        # The first request retries and answers with a proper error.
+        log("error", "warm_up_failed", error=type(e).__name__)
+    log("info", "warm_up", ms=_ms(start))
+
+
+if os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):
+    _warm_up()
