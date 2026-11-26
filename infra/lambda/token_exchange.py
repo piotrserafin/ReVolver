@@ -22,8 +22,14 @@ Browser-login pairing: login runs in the phone's browser,
 tokens reach PebbleKit JS through a short-lived pairing item:
     POST action=pair_start                -> {code, secret}  (PebbleKit JS)
     POST grant_type=authorization_code&pair=<code>
-                                          -> {ok: true}      (browser; tokens stored, never returned)
-    POST action=pair_poll&code=&secret=   -> 202 pending | 200 tokens (once) | 404
+                                          -> {ok: true, confirm_code}  (browser; tokens held, never returned)
+    POST action=pair_confirm&code=&confirm=
+                                          -> 200 | 403 wrong code (attempts_left) | 404  (Pebble settings page)
+    POST action=pair_poll&code=&secret=   -> 202 pending | 200 tokens (once, after confirm) | 404
+
+The confirm code is shown only in the browser that did the Volvo login, and the
+user types it into ReVolver settings in the Pebble app. Tokens are released only
+after that, so a login started from someone else's link never reaches them.
 """
 
 import json
@@ -44,6 +50,10 @@ DEFAULT_AUTH_ENDPOINT = "https://auth.volvocars.com/realms/volvocars/protocol/op
 
 PAIR_TTL_SECONDS = 600
 PAIR_CODE_RE = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
+# No 0/O, 1/I/L: easy to read in the browser and type in the Pebble app.
+CONFIRM_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+CONFIRM_LENGTH = 6
+CONFIRM_MAX_ATTEMPTS = 5
 
 
 _config = {}
@@ -144,6 +154,8 @@ def _handle(event):
         return handle_pair_start()
     if action == "pair_poll":
         return handle_pair_poll(params)
+    if action == "pair_confirm":
+        return handle_pair_confirm(params)
 
     grant_type = params.get("grant_type", "")
 
@@ -202,27 +214,37 @@ def handle_auth_code(params):
     if not pair:
         return call_token_endpoint(token_body)
 
-    # The browser never gets the tokens; they wait on the pairing for PebbleKit JS.
+    # The browser never gets the tokens; they wait on the pairing for PebbleKit JS
+    # until the user confirms with the code shown in this browser.
+    expired = cors_response(
+        410, {"error": "pair_expired", "detail": "Login link expired or already used"}
+    )
+    # Check first, so a dead or made-up pairing doesn't redeem the code with Volvo.
+    item = _get_pairing(pair)
+    if not _pairing_live(item) or "tokens" in item:
+        return expired
+
     status, data = fetch_tokens(token_body)
     if status != 200:
         return cors_response(status, data)
+    confirm = new_confirm_code()
     try:
         _pairing_client().update_item(
             TableName=_pairing_table(),
             Key={"code": {"S": pair}},
-            UpdateExpression="SET tokens = :t",
+            UpdateExpression="SET tokens = :t, confirm_hash = :c, attempts = :zero",
             ConditionExpression="attribute_exists(code) AND attribute_not_exists(tokens) AND #ttl > :now",
             ExpressionAttributeNames={"#ttl": "ttl"},
             ExpressionAttributeValues={
                 ":t": {"S": json.dumps(data)},
+                ":c": {"S": _hash_secret(confirm)},
+                ":zero": {"N": "0"},
                 ":now": {"N": str(int(time.time()))},
             },
         )
     except _pairing_client().exceptions.ConditionalCheckFailedException:
-        return cors_response(
-            410, {"error": "pair_expired", "detail": "Login link expired or already used"}
-        )
-    return cors_response(200, {"ok": True})
+        return expired
+    return cors_response(200, {"ok": True, "confirm_code": confirm})
 
 
 def handle_refresh(params):
@@ -335,6 +357,76 @@ def handle_pair_start():
     )
 
 
+def new_confirm_code():
+    return "".join(secrets.choice(CONFIRM_ALPHABET) for _ in range(CONFIRM_LENGTH))
+
+
+def normalize_confirm(value):
+    """Accept what people type: lower case, spaces, a dash in the middle."""
+    return "".join(ch for ch in value.upper() if ch not in " -")
+
+
+def _get_pairing(code):
+    return (
+        _pairing_client()
+        .get_item(TableName=_pairing_table(), Key={"code": {"S": code}}, ConsistentRead=True)
+        .get("Item")
+    )
+
+
+def _pairing_live(item):
+    # DynamoDB TTL deletes lazily, so check expiry here too.
+    return bool(item) and int(item["ttl"]["N"]) > int(time.time())
+
+
+def handle_pair_confirm(params):
+    """The user types the code from the browser into ReVolver settings (Pebble app)."""
+    code = params.get("code", "")
+    confirm = normalize_confirm(params.get("confirm", ""))
+    not_found = cors_response(404, {"error": "pair_not_found"})
+    if not PAIR_CODE_RE.match(code):
+        return not_found
+    if len(confirm) != CONFIRM_LENGTH or any(ch not in CONFIRM_ALPHABET for ch in confirm):
+        return cors_response(400, {"error": "invalid_confirm"})
+
+    item = _get_pairing(code)
+    if not _pairing_live(item) or "confirm_hash" not in item:
+        return not_found
+    if item.get("confirmed", {}).get("BOOL"):
+        return cors_response(200, {"ok": True})
+
+    if hmac.compare_digest(item["confirm_hash"]["S"], _hash_secret(confirm)):
+        _pairing_client().update_item(
+            TableName=_pairing_table(),
+            Key={"code": {"S": code}},
+            UpdateExpression="SET confirmed = :t",
+            ConditionExpression="attribute_exists(tokens)",
+            ExpressionAttributeValues={":t": {"BOOL": True}},
+        )
+        return cors_response(200, {"ok": True})
+
+    # Wrong code: count it; the last allowed miss deletes the pairing (and the tokens).
+    try:
+        attrs = _pairing_client().update_item(
+            TableName=_pairing_table(),
+            Key={"code": {"S": code}},
+            UpdateExpression="ADD attempts :one",
+            ConditionExpression="attribute_exists(tokens) AND attempts < :max",
+            ExpressionAttributeValues={
+                ":one": {"N": "1"},
+                ":max": {"N": str(CONFIRM_MAX_ATTEMPTS)},
+            },
+            ReturnValues="UPDATED_NEW",
+        )["Attributes"]
+        left = CONFIRM_MAX_ATTEMPTS - int(attrs["attempts"]["N"])
+    except _pairing_client().exceptions.ConditionalCheckFailedException:
+        left = 0
+    if left <= 0:
+        _pairing_client().delete_item(TableName=_pairing_table(), Key={"code": {"S": code}})
+        return not_found
+    return cors_response(403, {"error": "wrong_code", "attempts_left": left})
+
+
 def handle_pair_poll(params):
     code = params.get("code", "")
     secret = params.get("secret", "")
@@ -342,26 +434,25 @@ def handle_pair_poll(params):
     if not PAIR_CODE_RE.match(code) or not secret:
         return not_found
 
-    item = _pairing_client().get_item(
-        TableName=_pairing_table(), Key={"code": {"S": code}}, ConsistentRead=True
-    ).get("Item")
-    # DynamoDB TTL deletes lazily, so check expiry here too. Unknown code, wrong
-    # secret and expired all look the same to the caller.
-    if (
-        not item
-        or int(item["ttl"]["N"]) <= int(time.time())
-        or not hmac.compare_digest(item["secret_hash"]["S"], _hash_secret(secret))
+    item = _get_pairing(code)
+    # Unknown code, wrong secret and expired all look the same to the caller.
+    if not _pairing_live(item) or not hmac.compare_digest(
+        item["secret_hash"]["S"], _hash_secret(secret)
     ):
         return not_found
     if "tokens" not in item:
         return cors_response(202, {"status": "pending"})
+    if not item.get("confirmed", {}).get("BOOL"):
+        # Logged in, waiting for the code from the browser (older apps treat 202 as pending)
+        return cors_response(202, {"status": "confirm"})
 
     # Conditional delete, so only one concurrent poll gets the tokens.
     try:
         old = _pairing_client().delete_item(
             TableName=_pairing_table(),
             Key={"code": {"S": code}},
-            ConditionExpression="attribute_exists(tokens)",
+            ConditionExpression="attribute_exists(tokens) AND confirmed = :t",
+            ExpressionAttributeValues={":t": {"BOOL": True}},
             ReturnValues="ALL_OLD",
         )
     except _pairing_client().exceptions.ConditionalCheckFailedException:

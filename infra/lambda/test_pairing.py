@@ -1,0 +1,213 @@
+"""Browser-login pairing tests: fake DynamoDB, fake Volvo token endpoint.
+
+Run: python3 -m unittest discover -s infra/lambda -p 'test_*.py'
+"""
+
+import json
+import os
+import re
+import time
+import unittest
+import urllib.parse
+
+os.environ.setdefault("PAIRING_TABLE", "test-pairing")
+
+import token_exchange as tx  # noqa: E402
+
+
+class ConditionalCheckFailedException(Exception):
+    pass
+
+
+class FakeDynamo:
+    """Just the DynamoDB calls and expressions token_exchange uses."""
+
+    class exceptions:
+        ConditionalCheckFailedException = ConditionalCheckFailedException
+
+    def __init__(self):
+        self.items = {}
+        self.calls = []
+
+    def _check(self, item, cond, names, values):
+        if not cond:
+            return
+        for part in cond.split(" AND "):
+            part = part.strip()
+            m = re.fullmatch(r"attribute_(not_)?exists\((\w+)\)", part)
+            if m:
+                exists = item is not None and m.group(2) in item
+                ok = not exists if m.group(1) else exists
+            else:
+                left, op, right = part.split()
+                left = (names or {}).get(left, left)
+                if item is None or left not in item:
+                    ok = False
+                else:
+                    a, b = item[left], values[right]
+                    if "N" in b:
+                        a, b = int(a["N"]), int(b["N"])
+                    ok = a == b if op == "=" else (a > b if op == ">" else a < b)
+            if not ok:
+                raise ConditionalCheckFailedException(part)
+
+    def put_item(self, TableName, Item, ConditionExpression=None, **kw):
+        key = Item["code"]["S"]
+        self._check(self.items.get(key), ConditionExpression, None, None)
+        self.items[key] = dict(Item)
+
+    def get_item(self, TableName, Key, ConsistentRead=False):
+        item = self.items.get(Key["code"]["S"])
+        return {"Item": dict(item)} if item else {}
+
+    def update_item(self, TableName, Key, UpdateExpression, ConditionExpression=None,
+                    ExpressionAttributeNames=None, ExpressionAttributeValues=None,
+                    ReturnValues=None):
+        key = Key["code"]["S"]
+        item = self.items.get(key)
+        self._check(item, ConditionExpression, ExpressionAttributeNames, ExpressionAttributeValues)
+        item = self.items.setdefault(key, {"code": {"S": key}})
+        verb, rest = UpdateExpression.split(" ", 1)
+        changed = {}
+        for assign in rest.split(","):
+            if verb == "SET":
+                name, val = [x.strip() for x in assign.split("=")]
+                item[name] = ExpressionAttributeValues[val]
+            else:  # ADD
+                name, val = assign.split()
+                cur = int(item.get(name, {"N": "0"})["N"])
+                item[name] = {"N": str(cur + int(ExpressionAttributeValues[val]["N"]))}
+            changed[name] = item[name]
+        return {"Attributes": changed}
+
+    def delete_item(self, TableName, Key, ConditionExpression=None,
+                    ExpressionAttributeValues=None, ReturnValues=None):
+        key = Key["code"]["S"]
+        item = self.items.get(key)
+        self._check(item, ConditionExpression, None, ExpressionAttributeValues)
+        self.items.pop(key, None)
+        return {"Attributes": item} if ReturnValues == "ALL_OLD" and item else {}
+
+
+TOKENS = {"access_token": "at", "refresh_token": "rt", "expires_in": 300,
+          "token_type": "Bearer", "vcc_api_key": "key"}
+
+
+def post(**params):
+    event = {
+        "requestContext": {"http": {"method": "POST"}},
+        "headers": {},
+        "body": urllib.parse.urlencode(params),
+    }
+    resp = tx._handle(event)
+    body = resp["body"]
+    return resp["statusCode"], (json.loads(body) if body else None)
+
+
+class PairingTest(unittest.TestCase):
+    def setUp(self):
+        self.db = FakeDynamo()
+        self.volvo_calls = 0
+        tx._dynamodb = self.db
+        tx._config = {"allowed-origins": "https://piotrserafin.github.io", "client-id": "x"}
+
+        def fake_fetch(body):
+            self.volvo_calls += 1
+            return 200, dict(TOKENS)
+
+        self._orig_fetch = tx.fetch_tokens
+        tx.fetch_tokens = fake_fetch
+
+    def tearDown(self):
+        tx.fetch_tokens = self._orig_fetch
+        tx._dynamodb = None
+        tx._config = {}
+
+    def start(self):
+        status, data = post(action="pair_start")
+        self.assertEqual(status, 200)
+        return data["code"], data["secret"]
+
+    def login(self, code):
+        return post(grant_type="authorization_code", code="c", code_verifier="v", pair=code)
+
+    def poll(self, code, secret):
+        return post(action="pair_poll", code=code, secret=secret)
+
+    def confirm(self, code, value):
+        return post(action="pair_confirm", code=code, confirm=value)
+
+    def test_full_flow(self):
+        code, secret = self.start()
+        self.assertEqual(self.poll(code, secret), (202, {"status": "pending"}))
+
+        status, data = self.login(code)
+        self.assertEqual(status, 200)
+        self.assertNotIn("access_token", data)  # the browser never sees tokens
+        confirm = data["confirm_code"]
+        self.assertRegex(confirm, r"^[A-HJKMNP-Z2-9]{6}$")
+
+        # Logged in but not confirmed: still no tokens for the poller
+        self.assertEqual(self.poll(code, secret), (202, {"status": "confirm"}))
+
+        # Typed the way people type it
+        typed = (confirm[:3] + "-" + confirm[3:]).lower()
+        self.assertEqual(self.confirm(code, typed), (200, {"ok": True}))
+
+        status, data = self.poll(code, secret)
+        self.assertEqual(status, 200)
+        self.assertEqual(data["access_token"], "at")
+        # Collected once only
+        self.assertEqual(self.poll(code, secret)[0], 404)
+
+    def test_link_owner_cannot_collect_without_code(self):
+        # Someone starts a pairing and gets another person to log in with it.
+        code, secret = self.start()
+        self.login(code)
+        for _ in range(100):
+            self.assertEqual(self.poll(code, secret)[0], 202)
+        self.assertNotIn("confirmed", self.db.items[code])
+
+    def test_wrong_codes_delete_pairing(self):
+        code, secret = self.start()
+        _, data = self.login(code)
+        wrong = "AAAAAA" if data["confirm_code"] != "AAAAAA" else "BBBBBB"
+        for left in range(tx.CONFIRM_MAX_ATTEMPTS - 1, 0, -1):
+            self.assertEqual(self.confirm(code, wrong), (403, {"error": "wrong_code", "attempts_left": left}))
+        self.assertEqual(self.confirm(code, wrong)[0], 404)
+        self.assertNotIn(code, self.db.items)
+        # Even the right code is useless now
+        self.assertEqual(self.confirm(code, data["confirm_code"])[0], 404)
+        self.assertEqual(self.poll(code, secret)[0], 404)
+
+    def test_confirm_needs_login_first(self):
+        code, _ = self.start()
+        self.assertEqual(self.confirm(code, "ABCDEF")[0], 404)
+
+    def test_confirm_rejects_bad_input(self):
+        code, _ = self.start()
+        self.login(code)
+        self.assertEqual(self.confirm(code, "ABC")[0], 400)
+        self.assertEqual(self.confirm(code, "ABCDE0")[0], 400)  # 0 is not in the alphabet
+        self.assertEqual(self.confirm("short", "ABCDEF")[0], 404)
+
+    def test_expired_or_unknown_pairing_skips_volvo(self):
+        self.assertEqual(self.login("x" * 22)[0], 410)
+        code, _ = self.start()
+        self.db.items[code]["ttl"] = {"N": str(int(time.time()) - 1)}
+        self.assertEqual(self.login(code)[0], 410)
+        self.assertEqual(self.volvo_calls, 0)
+
+    def test_second_login_on_same_pairing_rejected(self):
+        code, _ = self.start()
+        self.assertEqual(self.login(code)[0], 200)
+        self.assertEqual(self.login(code)[0], 410)
+        self.assertEqual(self.volvo_calls, 1)
+
+    def test_wrong_secret_looks_like_unknown(self):
+        code, _ = self.start()
+        self.assertEqual(self.poll(code, "nope")[0], 404)
+
+
+if __name__ == "__main__":
+    unittest.main()

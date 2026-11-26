@@ -4,6 +4,7 @@
   <title>ReVolver - Volvo Auth</title>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
   <link rel="stylesheet" href="style.css">
 </head>
 <body class="page-auth">
@@ -19,6 +20,7 @@
 
   <script>
     var LAMBDA_URL = 'https://tpl5qhrn75bxzps77pdqllhxuy0mckgw.lambda-url.eu-central-1.on.aws/';
+    var VOLVO_ACCOUNT_URL = 'https://auth.volvocars.com/realms/volvocars/account';
     // Legacy Volvo ID and Keycloak (Volvo ID migration, deadline 2027-01-31)
     var ALLOWED_AUTH_ORIGINS = ['https://volvoid.eu.volvocars.com/', 'https://auth.volvocars.com/'];
 
@@ -75,6 +77,14 @@
       $status.appendChild(document.createTextNode(msg));
     }
 
+    function addInfo(text, cls) {
+      var div = document.createElement('div');
+      div.className = cls || 'info';
+      div.textContent = text;
+      $action.appendChild(div);
+      return div;
+    }
+
     function clearAction() {
       while ($action.firstChild) $action.removeChild($action.firstChild);
     }
@@ -101,6 +111,7 @@
 
     var code = param('code');
     var error = param('error');
+    var returnedState = param('state');
 
     // Volvo's login is blank in the Pebble settings webview, so the login runs in the
     // phone's browser and PebbleKit JS collects the tokens from the Lambda via the pairing.
@@ -116,6 +127,12 @@
     // stale one, so a later normal login can't feed an old pairing.
     if (pair && !inPebbleWebview()) sessionStorage.setItem('pair', pair);
     else if (!code && !error) sessionStorage.removeItem('pair');
+
+    // Keep the login code, state and pairing out of the address bar and history. The Pebble
+    // settings page keeps ?pair, so a reload there still knows the pairing.
+    if (code || error || (pair && !inPebbleWebview())) {
+      history.replaceState(null, '', location.pathname);
+    }
 
     if (code) {
       exchangeToken();
@@ -154,6 +171,12 @@
         btn.id = 'loginBtn';
         btn.textContent = 'Log in with Volvo ID';
         btn.onclick = function() { startAuth(cfg); };
+
+        if (pair) {
+          // A pairing link sends the login to whichever phone started it.
+          addInfo('Continue only if you just tapped "Log in with Volvo ID" in ReVolver settings ' +
+            'in the Pebble app on this phone. Never use a login link someone sent you.', 'warn');
+        }
         $action.appendChild(btn);
 
         var info = document.createElement('div');
@@ -173,17 +196,7 @@
           '?pair=' + encodeURIComponent(pair);
         window.Pebble.openUrl(url).then(function(opened) {
           if (!opened) return;
-          $status.textContent = 'Finish logging in in your browser';
-          clearAction();
-          var info = document.createElement('div');
-          info.className = 'info';
-          info.textContent = 'ReVolver picks up the login automatically. Keep the ReVolver app open on your watch.';
-          $action.appendChild(info);
-          var close = document.createElement('a');
-          close.className = 'btn';
-          close.href = 'pebblejs://close';
-          close.textContent = 'Close';
-          $action.appendChild(close);
+          showConfirmForm();
         }, function(err) {
           showError('Could not open the browser', String(err && (err.message || err)));
         });
@@ -202,6 +215,69 @@
       here.textContent = 'Log in here instead';
       here.onclick = function(e) { e.preventDefault(); startAuth(cfg); };
       $action.appendChild(here);
+    }
+
+    // Pebble settings page: the code shown in the browser after the Volvo login
+    // releases the tokens to this phone's ReVolver.
+    function showConfirmForm(message) {
+      $status.textContent = 'Log in in your browser, then enter the code it shows';
+      clearAction();
+      if (message) addInfo(message, 'error');
+
+      var input = document.createElement('input');
+      input.className = 'confirm-input';
+      input.type = 'text';
+      input.maxLength = 8;
+      input.autocomplete = 'off';
+      input.autocapitalize = 'characters';
+      input.spellcheck = false;
+      input.placeholder = 'XXXXXX';
+      input.setAttribute('aria-label', 'Code from the browser');
+      $action.appendChild(input);
+
+      var btn = document.createElement('button');
+      btn.className = 'btn';
+      btn.type = 'button';
+      btn.textContent = 'Confirm';
+      btn.onclick = function() { sendConfirm(input.value); };
+      $action.appendChild(btn);
+
+      addInfo('Keep this page open while you log in. Keep the ReVolver app open on your watch.');
+
+      var close = document.createElement('a');
+      close.className = 'alt-login';
+      close.href = 'pebblejs://close';
+      close.textContent = 'Cancel';
+      $action.appendChild(close);
+    }
+
+    function sendConfirm(value) {
+      value = value.replace(/[\s-]/g, '').toUpperCase();
+      if (value.length !== 6) return showConfirmForm('The code has 6 letters and digits.');
+      showLoading('Checking code...');
+      request('POST', LAMBDA_URL,
+        'action=pair_confirm&code=' + encodeURIComponent(pair) + '&confirm=' + encodeURIComponent(value),
+        function(err, status, body) {
+          if (err) return showConfirmForm('Network error, try again.');
+          if (status === 200) {
+            $status.textContent = 'Logged in!';
+            clearAction();
+            addInfo('Your watch shows "Ready" in a few seconds.');
+            var done = document.createElement('a');
+            done.className = 'btn btn-success';
+            done.href = 'pebblejs://close';
+            done.textContent = 'Return to Pebble';
+            $action.appendChild(done);
+            return;
+          }
+          if (status === 403) {
+            var left = 0;
+            try { left = JSON.parse(body).attempts_left; } catch (e) {}
+            return showConfirmForm('Wrong code. ' + left + (left === 1 ? ' try' : ' tries') + ' left.');
+          }
+          if (status === 400) return showConfirmForm('That doesn\'t look like the code. Check it in your browser.');
+          showError('Login expired', 'Close this page, open ReVolver settings again and log in again.');
+        });
     }
 
     // Step 2: Redirect to Volvo ID
@@ -228,7 +304,7 @@
       var verifier = sessionStorage.getItem('pkce_verifier');
       var savedState = sessionStorage.getItem('oauth_state');
 
-      if (!savedState || param('state') !== savedState) {
+      if (!savedState || returnedState !== savedState) {
         sessionStorage.removeItem('pkce_verifier');
         sessionStorage.removeItem('oauth_state');
         return showError('Security error', 'State mismatch or session expired.');
@@ -247,6 +323,8 @@
         (pairCode ? '&pair=' + encodeURIComponent(pairCode) : '');
 
       request('POST', LAMBDA_URL, body, function(err, status, resp) {
+        sessionStorage.removeItem('pkce_verifier');
+        sessionStorage.removeItem('oauth_state');
         if (err) return showError('Network error', err);
         if (pairCode) sessionStorage.removeItem('pair');
         if (pairCode && status === 410) {
@@ -262,22 +340,23 @@
         catch (e) { return showError('Invalid token response', 'Server returned non-JSON.'); }
 
         if (pairCode) {
-          // No token payload: PebbleKit JS collects the tokens from the Lambda
-          sessionStorage.removeItem('pkce_verifier');
-          sessionStorage.removeItem('oauth_state');
-          $status.textContent = 'Connected to Volvo!';
+          // No token payload: ReVolver collects the tokens once the code is entered there
+          if (!data.confirm_code) return showError('Invalid server response', 'No confirmation code.');
+          $status.textContent = 'Almost done: enter this code in the Pebble app';
           clearAction();
-          var done = document.createElement('div');
-          done.className = 'info';
-          done.textContent = 'Go back to the Pebble app. Your watch shows "Ready" in a few seconds. You can close this tab.';
-          $action.appendChild(done);
-          if (inPebbleWebview()) {
-            var closeLink = document.createElement('a');
-            closeLink.className = 'btn btn-success';
-            closeLink.href = 'pebblejs://close';
-            closeLink.textContent = 'Return to Pebble';
-            $action.appendChild(closeLink);
-          }
+          var codeEl = document.createElement('div');
+          codeEl.className = 'confirm-code';
+          codeEl.textContent = data.confirm_code;
+          $action.appendChild(codeEl);
+          addInfo('Go back to the Pebble app and type this code in ReVolver settings. ' +
+            'It works for a few minutes.');
+          addInfo('Never share this code. ReVolver never asks for it by message, email or on ' +
+            'another website. If you didn\'t start this login yourself, close this page.', 'warn');
+          var revoke = document.createElement('a');
+          revoke.className = 'alt-login';
+          revoke.href = VOLVO_ACCOUNT_URL;
+          revoke.textContent = 'Didn\'t start this? Review access in your Volvo ID account';
+          $action.appendChild(revoke);
           return;
         }
 
@@ -287,9 +366,6 @@
           EXPIRES_IN: data.expires_in || 3600,
           VCC_API_KEY: data.vcc_api_key || ''
         });
-
-        sessionStorage.removeItem('pkce_verifier');
-        sessionStorage.removeItem('oauth_state');
 
         $status.textContent = 'Connected to Volvo!';
         clearAction();

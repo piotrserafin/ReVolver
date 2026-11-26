@@ -126,8 +126,9 @@ The Core Devices Pebble app on Android injects a script into watchapp settings p
 ```
 PebbleKit JS ──action=pair_start──► Lambda ── {code, secret}       (sha256(secret) stored)
 Browser      ──authorization_code + pair=<code>──► Lambda ──► Volvo
-                                                   tokens stored on the item; browser gets {"ok": true}
-PebbleKit JS ──action=pair_poll + code + secret──► Lambda ── 202 pending | 200 tokens (item deleted)
+                                                   tokens held on the item; browser gets {"ok": true, "confirm_code"}
+Settings page ──action=pair_confirm + code + confirm_code──► Lambda   (user types the code from the browser)
+PebbleKit JS ──action=pair_poll + code + secret──► Lambda ── 202 pending/confirm | 200 tokens (item deleted)
 ```
 
 **Input:** (application/x-www-form-urlencoded)
@@ -135,6 +136,7 @@ PebbleKit JS ──action=pair_poll + code + secret──► Lambda ── 202 p
 ```
 action=pair_start
 action=pair_poll&code=<code>&secret=<secret>
+action=pair_confirm&code=<code>&confirm=<confirm_code>
 grant_type=authorization_code&code=...&code_verifier=...&pair=<code>
 ```
 
@@ -143,8 +145,11 @@ grant_type=authorization_code&code=...&code_verifier=...&pair=<code>
 | Call | Response |
 |---|---|
 | `pair_start` | 200 `{"code", "secret", "expires_in": 600}` |
-| `pair_poll` | 202 `{"status": "pending"}`, 200 = same body as token exchange (once), 404 `{"error": "pair_not_found"}` (unknown, wrong secret or expired) |
-| exchange with `pair` | 200 `{"ok": true}`, 410 `{"error": "pair_expired"}` (expired or already used) |
+| `pair_poll` | 202 `{"status": "pending"}` (no login yet) or `{"status": "confirm"}` (waiting for the code), 200 = same body as token exchange (once, only after `pair_confirm`), 404 `{"error": "pair_not_found"}` (unknown, wrong secret or expired) |
+| exchange with `pair` | 200 `{"ok": true, "confirm_code": "K7P2QX"}` (6 characters, no 0/O/1/I/L; only its hash is stored), 410 `{"error": "pair_expired"}` (expired or already used; checked before the code is redeemed with Volvo) |
+| `pair_confirm` | 200 `{"ok": true}`, 403 `{"error": "wrong_code", "attempts_left"}`, 404 after the 5th wrong code (pairing and tokens deleted) or if unknown / expired / no login yet, 400 `{"error": "invalid_confirm"}` (wrong format; accepts lower case, spaces and a dash) |
+
+Tests: `python3 -m unittest discover -s infra/lambda -p 'test_*.py'` (fake DynamoDB, no AWS; runs in CI).
 
 ### 5. OPTIONS — CORS Preflight
 

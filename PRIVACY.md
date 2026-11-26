@@ -37,13 +37,16 @@ phone.
 **Browser login.** On Android, Volvo's login page doesn't work inside the Pebble
 app ([reported to the Pebble app developers](https://github.com/coredevices/mobileapp/issues/507)), so ReVolver opens it in your
 phone's browser. The browser can't hand the
-tokens back to the Pebble app directly, so the Lambda keeps them in an encrypted
-AWS DynamoDB table until the ReVolver app on your phone collects them, usually
-within seconds:
+tokens back to the Pebble app directly, so the Lambda keeps them in an AWS
+DynamoDB table (encrypted at rest by AWS) until the ReVolver app on your phone
+collects them:
 
-- Deleted as soon as they're collected, and never kept longer than 10 minutes
+- After the Volvo login, your browser shows a 6-character confirmation code.
+  The tokens are released only after you type it into ReVolver settings in the
+  Pebble app (5 wrong tries delete them)
 - Only the ReVolver app that started the login can collect them (it holds a
   one-time secret that never leaves your phone)
+- Deleted as soon as they're collected, and never kept longer than 10 minutes
 - The browser never receives your tokens
 
 ## What the Lambda proxy sees

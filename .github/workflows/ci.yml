@@ -28,6 +28,11 @@ jobs:
       - name: Run tests
         run: npm test
 
+      # Same job, so the required "JS tests" check also covers the Lambda.
+      # Standard library only (fake DynamoDB), no pip install.
+      - name: Lambda tests
+        run: python3 -m unittest discover -s infra/lambda -p 'test_*.py' -v
+
   build:
     name: Build (all platforms)
     runs-on: ubuntu-latest

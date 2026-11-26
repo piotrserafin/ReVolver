@@ -95,7 +95,10 @@ class ReVolverAuthStack(Stack):
             "TokenExchangeFunction",
             description="ReVolver OAuth2 token exchange proxy for Volvo ID"
             + description_suffix,
-            code=lambda_.Code.from_asset("lambda"),  # infra/lambda/
+            code=lambda_.Code.from_asset(
+                "lambda",  # infra/lambda/
+                exclude=["test_*.py", "__pycache__", "README.md"],
+            ),
             runtime=lambda_.Runtime.PYTHON_3_12,
             handler="token_exchange.lambda_handler",
             memory_size=128,
