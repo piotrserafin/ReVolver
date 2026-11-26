@@ -368,7 +368,7 @@ Volvo checks:
 | `/revolver/vcc-api-key`     | SecureString | ✅       | Volvo Connected Cars API key               |
 | `/revolver/redirect-uri`    | String       | ✅       | OAuth redirect URI                         |
 | `/revolver/allowed-origins` | String       | ✅       | Comma-separated allowed CORS origins       |
-| `/revolver/scopes`          | String       | Optional | Space-separated OAuth scopes (has default) |
+| `/revolver/scopes`          | String       | ✅       | Space-separated OAuth scopes               |
 | `/revolver/auth-endpoint`   | String       | Optional | Volvo auth URL (has default)               |
 | `/revolver/token-endpoint`  | String       | Optional | Volvo token URL (has default)              |
 
@@ -422,6 +422,20 @@ The Function URL is public: it ships in every `.pbw`. These cap what a flood can
 - **CloudWatch alarms** → SNS topic `<stack>-alarms`:
   - `<stack>-throttles`: any throttle in 5 min (the cap was hit).
   - `<stack>-invocations`: more than 1000 (prod) / 200 (dev) requests in an hour.
+  - `<stack>-handler-errors`: the handler logged `"level": "error"` (unhandled exception or missing SSM config). The handler catches every exception, so Lambda's own Errors metric stays 0.
+
+### Logs
+
+Log group `/revolver/<stack>/token-exchange`, kept 30 days. One JSON line per event, never request bodies, tokens or secrets:
+
+| Event | Level | Fields |
+|-------|-------|--------|
+| `unhandled` | error | exception type, request kind (`pair_start`, `refresh_token`, …) |
+| `config_missing` | error | names of the missing SSM parameters |
+| `volvo_error` | warn | HTTP status, Volvo's error code (e.g. `invalid_grant`), request kind |
+| `volvo_timeout`, `volvo_network_error` | warn | exception type, request kind |
+
+The old `/aws/lambda/<function>` log groups (no retention) are no longer written to; delete them once the new group has logs.
 
 ### Get alarm emails (once per stack)
 
@@ -473,7 +487,7 @@ aws ssm put-parameter --name /revolver-dev/token-endpoint --type String --value 
 
 - `allowed-origins` needs **both** origins: GitHub Pages redirects `piotrserafin.github.io` to the custom domain `piotrserafin.dev`, so the browser calls from `.dev`. A missing origin shows up as a CORS error (`Access-Control-Allow-Origin` header contains the invalid value '').
 - `scopes` is required: the auth page rejects a config without it. Dev and prod use the same 28 scopes (see `doc/scopes.md`); every scope must also be enabled on the Volvo app, or authorize fails with `invalid_scope`. Don't add `offline_access`: Keycloak rejects it.
-- The Lambda caches config after the first call that finds any parameter. If it was called while the parameters were only partly set, force a cold start (see [Rotate Secrets](#rotate-secrets)) with `ReVolverAuthStack-dev-token-exchange`.
+- Until all required parameters exist the Lambda answers 503 `not_configured` (and logs which names are missing). It rechecks SSM at most every 5 minutes.
 - When not in use: `cdk destroy -c stage=dev`. The SSM parameters are kept; a redeploy creates a **new** Function URL, which must then be updated in `wscript`, `.github/workflows/deploy-auth-dev.yml` (`DEV_LAMBDA_URL`), `auth/diag.html` and `package.json` (`usesPermissions`, needs a new app release).
 
 ## Error Handling
@@ -491,7 +505,9 @@ aws ssm put-parameter --name /revolver-dev/token-endpoint --type String --value 
 | Over the concurrency cap | 429 (from AWS, before the handler runs)                  |
 | Pairing expired / used | 410 `{"error": "pair_expired"}` (exchange), 404 `{"error": "pair_not_found"}` (poll) |
 | Volvo returns error    | Volvo's status code + sanitized error (no raw body leaked) |
-| Volvo unreachable      | 502 `{"error": "network_error"}`                           |
+| Volvo unreachable      | 502 `{"error": "network_error"}` (details only in the log) |
+| Volvo slower than 8 s  | 504 `{"error": "timeout"}`                                 |
+| Required SSM parameter missing | 503 `{"error": "not_configured"}`                  |
 
 ## Security
 
@@ -501,10 +517,10 @@ aws ssm put-parameter --name /revolver-dev/token-endpoint --type String --value 
 | vcc_api_key exposure   | Returned to client in token response (needed for direct API calls)         |
 | Origin validation      | Checked against SSM `allowed-origins` list                                 |
 | Error leaking          | Volvo error bodies sanitized — only `error` and `error_description` passed |
-| Unhandled exceptions   | Top-level try/catch returns generic 500 — no secrets/tokens in CloudWatch  |
+| Unhandled exceptions   | Top-level try/catch returns generic 500; only the exception type is logged (no messages, tracebacks or tokens) |
 | SSM access             | IAM scoped to `/revolver/*` (prod) or `/revolver-dev/*` (dev) parameters only |
 | KMS decryption         | Restricted to SSM service context with parameter ARN condition             |
-| Config caching         | SSM values cached after cold start (no per-request SSM calls)              |
+| Config caching         | SSM values cached for 5 min (no per-request SSM calls); required parameters missing → 503, no fallback defaults |
 | Flooding               | Account concurrency limit (10), input checks before Volvo, throttle + traffic alarms (see Limits and Alarms) |
 | Pairing tokens         | DynamoDB, encrypted at rest; max 10 min (checked in code, TTL cleans up); delivered once via conditional delete; only `sha256(secret)` stored; never returned to the browser |
 
@@ -517,7 +533,7 @@ aws ssm put-parameter --name /revolver-dev/token-endpoint --type String --value 
 - SSM Parameter Store: free for standard parameters
 - DynamoDB (pairing): on-demand, a few hundred requests per login, fractions of a cent
 - KMS: free for SSM default key (`aws/ssm`)
-- CloudWatch alarms: 10 free per account, then $0.10 per alarm per month (2 per stack)
+- CloudWatch alarms: 10 free per account, then $0.10 per alarm per month (3 per stack)
 - SNS email: first 1000 emails/month free
 
 ## Rotate Secrets
@@ -532,7 +548,7 @@ aws ssm put-parameter \
   --overwrite
 ```
 
-Force Lambda cold start to pick up new values:
+Warm instances pick up the new value within 5 minutes (config cache). To apply it at once, force a cold start:
 
 ```bash
 aws lambda update-function-configuration \

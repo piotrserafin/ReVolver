@@ -10,6 +10,7 @@ from aws_cdk import (
     aws_sns as sns,
     aws_cloudwatch as cloudwatch,
     aws_cloudwatch_actions as cw_actions,
+    aws_logs as logs,
 )
 from constructs import Construct
 
@@ -101,6 +102,16 @@ class ReVolverAuthStack(Stack):
             removal_policy=RemovalPolicy.DESTROY,
         )
 
+        # Own log group so the stack sets retention. The handler logs one JSON
+        # line per event, never bodies or tokens.
+        log_group = logs.LogGroup(
+            self,
+            "TokenExchangeLogs",
+            log_group_name=f"/revolver/{stack.stack_name}/token-exchange",
+            retention=logs.RetentionDays.ONE_MONTH,
+            removal_policy=RemovalPolicy.DESTROY,
+        )
+
         # Token exchange Lambda
         token_function = lambda_.Function(
             self,
@@ -116,6 +127,7 @@ class ReVolverAuthStack(Stack):
             memory_size=128,
             timeout=Duration.seconds(10),
             role=lambda_role,
+            log_group=log_group,
             function_name=f"{stack.stack_name}-token-exchange",
             environment={
                 # Only the SSM prefix — no secrets in env vars or CloudFormation
@@ -174,7 +186,29 @@ class ReVolverAuthStack(Stack):
             comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
             treat_missing_data=cloudwatch.TreatMissingData.NOT_BREACHING,
         )
-        for alarm in (throttles, invocations):
+        # The handler catches every exception (so Lambda's Errors metric stays 0)
+        # and logs {"level": "error", ...} instead: unhandled bugs, missing config.
+        handler_errors = logs.MetricFilter(
+            self,
+            "HandlerErrorsFilter",
+            log_group=log_group,
+            filter_pattern=logs.FilterPattern.string_value("$.level", "=", "error"),
+            metric_namespace="ReVolver",
+            metric_name=f"{stack.stack_name}-handler-errors",
+            metric_value="1",
+        )
+        errors = cloudwatch.Alarm(
+            self,
+            "HandlerErrorsAlarm",
+            alarm_name=f"{stack.stack_name}-handler-errors",
+            alarm_description="Token Lambda logged an error: unhandled exception or missing SSM config",
+            metric=handler_errors.metric(period=Duration.minutes(5), statistic="Sum"),
+            threshold=1,
+            evaluation_periods=1,
+            comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+            treat_missing_data=cloudwatch.TreatMissingData.NOT_BREACHING,
+        )
+        for alarm in (throttles, invocations, errors):
             alarm.add_alarm_action(notify)
 
         CfnOutput(

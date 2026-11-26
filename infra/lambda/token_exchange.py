@@ -10,7 +10,7 @@ SSM Parameters (create once):
     /revolver/vcc-api-key      (SecureString) - Volvo Connected Cars API key
     /revolver/redirect-uri     (String)       - OAuth redirect URI
     /revolver/allowed-origins  (String)       - Comma-separated allowed CORS origins
-    /revolver/scopes           (String)       - Space-separated OAuth scopes (optional)
+    /revolver/scopes           (String)       - Space-separated OAuth scopes
     /revolver/auth-endpoint    (String)       - Volvo authorization URL (optional)
     /revolver/token-endpoint   (String)       - Volvo token URL (optional)
 
@@ -40,12 +40,12 @@ import base64
 import hashlib
 import hmac
 import secrets
+import socket
 import urllib.request
 import urllib.parse
 import urllib.error
 
 DEFAULT_TOKEN_ENDPOINT = "https://auth.volvocars.com/realms/volvocars/protocol/openid-connect/token"
-DEFAULT_ALLOWED_ORIGINS = "https://piotrserafin.github.io,https://piotrserafin.dev"
 DEFAULT_AUTH_ENDPOINT = "https://auth.volvocars.com/realms/volvocars/protocol/openid-connect/auth"
 
 PAIR_TTL_SECONDS = 600
@@ -66,13 +66,31 @@ MAX_REFRESH_TOKEN_LENGTH = 8192
 CODE_VERIFIER_RE = re.compile(r"^[A-Za-z0-9._~-]{43,128}$")
 
 
+# Seconds; a rotated secret takes effect within this time, no cold start needed.
+CONFIG_TTL_SECONDS = 300
+# Without these the Lambda refuses to work instead of falling back to defaults.
+REQUIRED_CONFIG = ("client-id", "client-secret", "vcc-api-key", "redirect-uri",
+                   "allowed-origins", "scopes")
+# Below the Lambda's 10 s timeout, so a slow Volvo gets a clean 504.
+VOLVO_TIMEOUT_SECONDS = 8
+
 _config = {}
+_config_expires = 0.0
+
+
+class ConfigError(Exception):
+    pass
+
+
+def log(level, event, **fields):
+    """One JSON line per event. Never pass request bodies, tokens or secrets."""
+    print(json.dumps({"level": level, "event": event, **fields}))
 
 
 def get_config():
-    """Load config from SSM Parameter Store (cached after first call)."""
-    global _config
-    if _config:
+    """Load config from SSM Parameter Store, cached for CONFIG_TTL_SECONDS."""
+    global _config, _config_expires
+    if _config and time.time() < _config_expires:
         return _config
 
     import boto3
@@ -94,15 +112,25 @@ def get_config():
         WithDecryption=True,
     )
 
+    config = {}
     for param in resp["Parameters"]:
         key = param["Name"].split("/")[-1]  # e.g. "client-id"
-        _config[key] = param["Value"]
+        config[key] = param["Value"]
 
+    missing = [k for k in REQUIRED_CONFIG if not config.get(k)]
+    if missing:
+        # Names only, never values
+        log("error", "config_missing", params=missing)
+        raise ConfigError(", ".join(missing))
+
+    _config = config
+    _config_expires = time.time() + CONFIG_TTL_SECONDS
     return _config
 
 
-# Current request origin (set per invocation)
+# Current request origin and kind (set per invocation; kind is for logs only)
 _request_origin = ""
+_request_kind = ""
 
 
 # ─── Handler ─────────────────────────────────────────────────────────────────
@@ -110,30 +138,37 @@ _request_origin = ""
 
 def lambda_handler(event, context):
     """Handle config, token exchange, and token refresh requests."""
+    global _request_kind
+    _request_kind = ""
     try:
         return _handle(event)
-    except Exception:
-        # Never log unhandled exceptions — tracebacks may contain secrets/tokens
-        return {
-            "statusCode": 500,
-            "headers": {"Content-Type": "application/json"},
-            "body": json.dumps({"error": "internal_error"}),
-        }
+    except ConfigError:
+        return _plain_error(503, "not_configured")
+    except Exception as e:
+        # Type and request kind only: messages and tracebacks may contain tokens
+        log("error", "unhandled", error=type(e).__name__, kind=_request_kind)
+        return _plain_error(500, "internal_error")
+
+
+def _plain_error(status, error):
+    """No CORS headers: the origin may not have been checked yet."""
+    return {
+        "statusCode": status,
+        "headers": {"Content-Type": "application/json"},
+        "body": json.dumps({"error": error}),
+    }
 
 
 def _handle(event):
     """Internal request handler."""
-    global _request_origin
+    global _request_origin, _request_kind
     http = event.get("requestContext", {}).get("http", {})
     method = http.get("method", "")
 
     # Verify request origin
     origin = (event.get("headers") or {}).get("origin", "")
     config = get_config()
-    allowed_origins = [
-        o.strip()
-        for o in config.get("allowed-origins", DEFAULT_ALLOWED_ORIGINS).split(",")
-    ]
+    allowed_origins = [o.strip() for o in config["allowed-origins"].split(",")]
 
     if origin and origin not in allowed_origins:
         return cors_response(
@@ -162,6 +197,7 @@ def _handle(event):
         return cors_response(400, {"error": "invalid_request"})
 
     action = params.get("action", "")
+    _request_kind = action or params.get("grant_type", "")[:32]
     if action == "pair_start":
         return handle_pair_start()
     if action == "pair_poll":
@@ -310,7 +346,7 @@ def fetch_tokens(body):
     )
 
     try:
-        with urllib.request.urlopen(req) as resp:
+        with urllib.request.urlopen(req, timeout=VOLVO_TIMEOUT_SECONDS) as resp:
             data = json.loads(resp.read().decode())
             return 200, {
                 "access_token": data.get("access_token"),
@@ -330,9 +366,18 @@ def fetch_tokens(body):
             }
         except Exception:
             err = {"error": "token_error", "detail": "Token exchange failed"}
+        # Volvo's error code is safe to log (e.g. invalid_grant); the description isn't needed.
+        log("warn", "volvo_error", status=e.code, error=str(err["error"])[:64], kind=_request_kind)
         return e.code, err
+    except (TimeoutError, socket.timeout):
+        log("warn", "volvo_timeout", kind=_request_kind)
+        return 504, {"error": "timeout", "detail": "Volvo did not answer in time"}
     except urllib.error.URLError as e:
-        return 502, {"error": "network_error", "detail": str(e.reason)}
+        # The reason (DNS, socket detail) goes to the log, not to the client.
+        log("warn", "volvo_network_error", error=type(e.reason).__name__, kind=_request_kind)
+        if isinstance(e.reason, (TimeoutError, socket.timeout)):
+            return 504, {"error": "timeout", "detail": "Volvo did not answer in time"}
+        return 502, {"error": "network_error", "detail": "Could not reach Volvo"}
 
 
 # ─── Browser-login pairing ───────────────────────────────────────────────────
