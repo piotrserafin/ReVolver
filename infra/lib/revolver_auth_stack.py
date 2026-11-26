@@ -7,8 +7,20 @@ from aws_cdk import (
     aws_lambda as lambda_,
     aws_iam as iam,
     aws_ssm as ssm,
+    aws_sns as sns,
+    aws_cloudwatch as cloudwatch,
+    aws_cloudwatch_actions as cw_actions,
 )
 from constructs import Construct
+
+
+# The Function URL is public (it ships in every .pbw). No reserved concurrency:
+# the account's whole Lambda limit is 10 (checked 2026-11-26) and AWS keeps 10
+# unreserved, so reserving any fails the deploy. That limit is the cap for now:
+# above 10 concurrent requests (prod + dev together) callers get 429. If the
+# quota is ever raised, reserve ~10 for prod here.
+# Alarm when an hour has more requests than real users ever make.
+INVOCATIONS_PER_HOUR_ALARM = {"prod": 1000, "dev": 200}
 
 
 class ReVolverAuthStack(Stack):
@@ -123,6 +135,53 @@ class ReVolverAuthStack(Stack):
         # Function URL (CORS handled by Lambda for dynamic origin matching)
         function_url = token_function.add_function_url(
             auth_type=lambda_.FunctionUrlAuthType.NONE,
+        )
+
+        # ─── Alarms ───
+        # Email subscription is added by hand (infra/lambda/README.md, "Alarms"),
+        # so no address ends up in the repo or the template.
+        alarm_topic = sns.Topic(
+            self,
+            "AlarmTopic",
+            topic_name=f"{stack.stack_name}-alarms",
+            display_name="ReVolver alarms" + description_suffix,
+        )
+        notify = cw_actions.SnsAction(alarm_topic)
+
+        throttles = cloudwatch.Alarm(
+            self,
+            "ThrottlesAlarm",
+            alarm_name=f"{stack.stack_name}-throttles",
+            alarm_description="Token Lambda hit its concurrency cap: flood, or users getting 429s",
+            metric=token_function.metric_throttles(
+                period=Duration.minutes(5), statistic="Sum"
+            ),
+            threshold=1,
+            evaluation_periods=1,
+            comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+            treat_missing_data=cloudwatch.TreatMissingData.NOT_BREACHING,
+        )
+        invocations = cloudwatch.Alarm(
+            self,
+            "InvocationsAlarm",
+            alarm_name=f"{stack.stack_name}-invocations",
+            alarm_description="Token Lambda traffic far above normal use",
+            metric=token_function.metric_invocations(
+                period=Duration.hours(1), statistic="Sum"
+            ),
+            threshold=INVOCATIONS_PER_HOUR_ALARM[stage],
+            evaluation_periods=1,
+            comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
+            treat_missing_data=cloudwatch.TreatMissingData.NOT_BREACHING,
+        )
+        for alarm in (throttles, invocations):
+            alarm.add_alarm_action(notify)
+
+        CfnOutput(
+            self,
+            "AlarmTopicArn",
+            value=alarm_topic.topic_arn,
+            description="Subscribe an email to get alarms (see infra/lambda/README.md)",
         )
 
         CfnOutput(

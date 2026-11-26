@@ -149,7 +149,7 @@ grant_type=authorization_code&code=...&code_verifier=...&pair=<code>
 | exchange with `pair` | 200 `{"ok": true, "confirm_code": "K7P2QX"}` (6 characters, no 0/O/1/I/L; only its hash is stored), 410 `{"error": "pair_expired"}` (expired or already used; checked before the code is redeemed with Volvo) |
 | `pair_confirm` | 200 `{"ok": true}`, 403 `{"error": "wrong_code", "attempts_left"}`, 404 after the 5th wrong code (pairing and tokens deleted) or if unknown / expired / no login yet, 400 `{"error": "invalid_confirm"}` (wrong format; accepts lower case, spaces and a dash) |
 
-Tests: `python3 -m unittest discover -s infra/lambda -p 'test_*.py'` (fake DynamoDB, no AWS; runs in CI).
+Tests: `python3 -m unittest discover -s infra/lambda -p 'test_*.py'` (pairing and input checks; fake DynamoDB, no AWS; runs in CI).
 
 ### 5. OPTIONS — CORS Preflight
 
@@ -413,6 +413,32 @@ cdk deploy
 
 Merging to `main` with changes under `infra/**` runs `cdk deploy` (prod) automatically via `.github/workflows/deploy-lambda.yml`.
 
+## Limits and Alarms
+
+The Function URL is public: it ships in every `.pbw`. These cap what a flood can cost and keep it from using up the Volvo client ID.
+
+- **Concurrency cap:** the account's Lambda limit is 10 in total (prod and dev together), so above 10 concurrent requests callers get 429. No reserved concurrency: AWS keeps 10 unreserved, so reserving any fails the deploy. If the quota is ever raised, reserve ~10 for prod in `revolver_auth_stack.py`.
+- **Input checks before Volvo:** body ≤ 16 KB (413), `code` ≤ 2048 and `refresh_token` ≤ 8192 characters from `[A-Za-z0-9._~+/=-]`, `code_verifier` per RFC 7636 (43–128 characters). Anything else gets a 400 without a Volvo call.
+- **CloudWatch alarms** → SNS topic `<stack>-alarms`:
+  - `<stack>-throttles`: any throttle in 5 min (the cap was hit).
+  - `<stack>-invocations`: more than 1000 (prod) / 200 (dev) requests in an hour.
+
+### Get alarm emails (once per stack)
+
+The address is added by hand, so it is not in the repo or the CloudFormation template:
+
+```bash
+TOPIC=$(aws cloudformation describe-stacks --stack-name ReVolverAuthStack \
+  --query "Stacks[0].Outputs[?OutputKey=='AlarmTopicArn'].OutputValue" --output text)
+aws sns subscribe --topic-arn "$TOPIC" --protocol email --notification-endpoint you@example.com
+```
+
+Click the link in the confirmation email. Redeploys keep the subscription.
+
+### Budget (once per AWS account)
+
+Not in CDK, because a budget covers the whole account. Billing → Budgets → Create budget → "Monthly cost budget", e.g. $5, email alerts at 80% actual and 100% forecasted.
+
 ## Dev Stack
 
 A separate stack for development, with its own Volvo application (unpublished), SSM prefix and Function URL. Prod is untouched.
@@ -460,6 +486,9 @@ aws ssm put-parameter --name /revolver-dev/token-endpoint --type String --value 
 | Missing refresh_token  | 400 `{"error": "missing_refresh_token"}`                   |
 | Unsupported grant_type | 400 `{"error": "unsupported_grant_type"}`                  |
 | Malformed `pair`       | 400 `{"error": "invalid_pair"}`                            |
+| Malformed code / verifier / refresh_token | 400 `{"error": "invalid_code"}` / `invalid_code_verifier` / `invalid_refresh_token` (no Volvo call) |
+| Body over 16 KB        | 413 `{"error": "request_too_large"}`                       |
+| Over the concurrency cap | 429 (from AWS, before the handler runs)                  |
 | Pairing expired / used | 410 `{"error": "pair_expired"}` (exchange), 404 `{"error": "pair_not_found"}` (poll) |
 | Volvo returns error    | Volvo's status code + sanitized error (no raw body leaked) |
 | Volvo unreachable      | 502 `{"error": "network_error"}`                           |
@@ -476,6 +505,7 @@ aws ssm put-parameter --name /revolver-dev/token-endpoint --type String --value 
 | SSM access             | IAM scoped to `/revolver/*` (prod) or `/revolver-dev/*` (dev) parameters only |
 | KMS decryption         | Restricted to SSM service context with parameter ARN condition             |
 | Config caching         | SSM values cached after cold start (no per-request SSM calls)              |
+| Flooding               | Account concurrency limit (10), input checks before Volvo, throttle + traffic alarms (see Limits and Alarms) |
 | Pairing tokens         | DynamoDB, encrypted at rest; max 10 min (checked in code, TTL cleans up); delivered once via conditional delete; only `sha256(secret)` stored; never returned to the browser |
 
 ## Cost
@@ -487,6 +517,8 @@ aws ssm put-parameter --name /revolver-dev/token-endpoint --type String --value 
 - SSM Parameter Store: free for standard parameters
 - DynamoDB (pairing): on-demand, a few hundred requests per login, fractions of a cent
 - KMS: free for SSM default key (`aws/ssm`)
+- CloudWatch alarms: 10 free per account, then $0.10 per alarm per month (2 per stack)
+- SNS email: first 1000 emails/month free
 
 ## Rotate Secrets
 
