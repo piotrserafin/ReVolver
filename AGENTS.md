@@ -129,6 +129,8 @@ SELECT → ActionMenu → pick command → status shows "Sending..."
 → JS calls Volvo API → friendly result (e.g., "Locked!") shown 3s + vibration
 → status reverts to "Ready"
 ```
+- HTTP 200 with a failed `invokeStatus` (e.g. `UNABLE_TO_LOCK_DOOR_OPEN`, `CAR_IN_SLEEP_MODE`) → error result (`INVOKE_FAILED` in `index.js`).
+- Volvo reports the old door/engine state for some seconds after a command. Lock / Unlock / Engine start / stop: the expected state is shown at once (`EXPECTED`), then only `/doors` or `/engine-status` is checked at 3, 6, 10, 15, 25, 40, 60 s until Volvo reports the expected value (a newer report can still carry the old value, so timestamps don't confirm); then a full status refresh. Never confirmed → after 60 s the reported state is shown.
 
 ### Quick Launch
 Settings → Quick Launch picks one action (no Unlock). Opened from a Quick Launch button, the app sends it as soon as PebbleKit JS is up (first inbox message), with no confirmation; "Phone not ready" after 10 s. Launch `STATUS_MSG`s are ignored until the result has been shown. BACK closes the app before the send.
