@@ -529,6 +529,132 @@ function fetchEnergyCapability(cb) {
   });
 }
 
+// Status readers: {value}, or null without data.
+
+// Central lock can report LOCKED while an individual door/tailgate is
+// still UNLOCKED. Treat the car as Unlocked if any lockable field is.
+var LOCK_FIELDS = [
+  'centralLock',
+  'tailgate',
+  'frontLeftDoor',
+  'frontRightDoor',
+  'rearLeftDoor',
+  'rearRightDoor',
+  'hood',
+  'tankLid'
+];
+
+function readLock(resp) {
+  var sawValue = false,
+    anyUnlocked = false;
+  for (var i = 0; i < LOCK_FIELDS.length; i++) {
+    var lockField = field(resp, LOCK_FIELDS[i]);
+    if (lockField && lockField.value) {
+      sawValue = true;
+      if (lockField.value === 'UNLOCKED') anyUnlocked = true;
+    }
+  }
+  if (!sawValue) return null;
+  return { value: anyUnlocked ? 'Unlocked' : 'Locked' };
+}
+
+function readEngine(resp) {
+  var engineStatus = field(resp, 'engineStatus');
+  if (!(engineStatus && engineStatus.value)) return null;
+  return { value: engineStatus.value === 'RUNNING' ? 'Running' : 'Off' };
+}
+
+// After a command: show the expected state at once, then check the one endpoint
+// until Volvo reports the expected value, then refresh all. Volvo keeps reporting
+// the old state for some seconds after a command, and a report newer than the
+// command can still carry the old value, so only the value confirms.
+var EXPECTED = {
+  lock: { key: 'lock', value: 'Locked' },
+  'lock-reduced-guard': { key: 'lock', value: 'Locked' },
+  unlock: { key: 'lock', value: 'Unlocked' },
+  'engine-start': { key: 'engine', value: 'Running' },
+  'engine-stop': { key: 'engine', value: 'Off' }
+};
+var CONFIRM_CHECK = {
+  lock: { path: '/doors', read: readLock },
+  engine: { path: '/engine-status', read: readEngine }
+};
+// ms after the command; at most 7 single-endpoint GETs
+var CONFIRM_DELAYS_MS = [3000, 6000, 10000, 15000, 25000, 40000, 60000];
+
+var expectation = null; // {key, value, since, step, timer}
+var lastCar = null; // last CAR_STATUS fields, for the immediate update
+
+function sendCarStatus(car) {
+  lastCar = car;
+  send({
+    CAR_STATUS: [car.lock, car.engine, car.value, car.range, car.windows, car.type].join('|')
+  });
+}
+
+// The reported value, unless a command's result isn't confirmed yet.
+function withExpectation(key, reported) {
+  var e = expectation;
+  if (!e || e.key !== key) return reported ? reported.value : '?';
+  if (reported && reported.value === e.value) {
+    stopExpecting();
+    return reported.value;
+  }
+  return e.value;
+}
+
+function stopExpecting() {
+  if (expectation && expectation.timer) clearTimeout(expectation.timer);
+  expectation = null;
+}
+
+function expectAfterCommand(apiPath, since) {
+  var exp = EXPECTED[apiPath];
+  stopExpecting();
+  if (!exp) {
+    fetchCarStatus();
+    return;
+  }
+  var e = { key: exp.key, value: exp.value, since: since, step: 0, timer: null };
+  expectation = e;
+  if (lastCar) {
+    var car = {};
+    for (var k in lastCar) car[k] = lastCar[k];
+    car[exp.key] = exp.value;
+    sendCarStatus(car);
+  } else {
+    // Nothing to build on yet: full refresh, the expected value is applied there.
+    fetchCarStatus();
+  }
+  scheduleConfirm(e);
+}
+
+function scheduleConfirm(e) {
+  if (expectation !== e) return;
+  if (e.step >= CONFIRM_DELAYS_MS.length) {
+    // Never confirmed (e.g. a door was open): show what Volvo reports now.
+    stopExpecting();
+    fetchCarStatus();
+    return;
+  }
+  var wait = Math.max(0, e.since + CONFIRM_DELAYS_MS[e.step] - Date.now());
+  e.timer = setTimeout(function () {
+    e.timer = null;
+    var check = CONFIRM_CHECK[e.key];
+    volvoGet('/vehicles/' + get(STORE.VIN) + check.path, function (resp) {
+      if (expectation !== e) return;
+      var reported = resp && check.read(resp);
+      if (reported && reported.value === e.value) {
+        stopExpecting();
+        fetchCarStatus();
+      } else {
+        e.step++;
+        scheduleConfirm(e);
+      }
+    });
+  }, wait);
+}
+
 function fetchCarStatus() {
   // Resolve energy capability once per VIN, then fetch live status.
   fetchEnergyCapability(doFetchCarStatus);
@@ -537,8 +663,8 @@ function fetchCarStatus() {
 function doFetchCarStatus(energyCapable) {
   var vin = get(STORE.VIN);
   var data = {
-    lock: '?',
-    engine: '?',
+    lock: null, // {value} from readLock / readEngine
+    engine: null,
     windows: '?',
     fuel: null,
     fuelRange: null,
@@ -581,44 +707,23 @@ function doFetchCarStatus(energyCapable) {
     }
 
     // Format: "lock|engine|value|range|windows|type" (type: F=fuel, B=battery)
-    var str =
-      data.lock + '|' + data.engine + '|' + value + '|' + range + '|' + data.windows + '|' + type;
-    send({ CAR_STATUS: str });
+    sendCarStatus({
+      lock: withExpectation('lock', data.lock),
+      engine: withExpectation('engine', data.engine),
+      value: value,
+      range: range,
+      windows: data.windows,
+      type: type
+    });
   }
 
   volvoGet('/vehicles/' + vin + '/doors', function (resp) {
-    // Central lock can report LOCKED while an individual door/tailgate is
-    // still UNLOCKED. Treat the car as Unlocked if any lockable field is.
-    var lockFields = [
-      'centralLock',
-      'tailgate',
-      'frontLeftDoor',
-      'frontRightDoor',
-      'rearLeftDoor',
-      'rearRightDoor',
-      'hood',
-      'tankLid'
-    ];
-    var sawValue = false,
-      anyUnlocked = false;
-    for (var i = 0; i < lockFields.length; i++) {
-      var lockField = field(resp, lockFields[i]);
-      if (lockField && lockField.value) {
-        sawValue = true;
-        if (lockField.value === 'UNLOCKED') anyUnlocked = true;
-      }
-    }
-    if (sawValue) {
-      data.lock = anyUnlocked ? 'Unlocked' : 'Locked';
-    }
+    data.lock = resp && readLock(resp);
     finish();
   });
 
   volvoGet('/vehicles/' + vin + '/engine-status', function (resp) {
-    var engineStatus = field(resp, 'engineStatus');
-    if (engineStatus && engineStatus.value) {
-      data.engine = engineStatus.value === 'RUNNING' ? 'Running' : 'Off';
-    }
+    data.engine = resp && readEngine(resp);
     finish();
   });
 
@@ -692,6 +797,26 @@ function doFetchCarStatus(energyCapable) {
 }
 
 // Command Execution
+
+// Volvo can answer HTTP 200 with a failed invokeStatus. Anything not listed
+// (COMPLETED, SUCCESS, DELIVERED, SENT, RUNNING, WAITING, UNKNOWN, ...) counts as success.
+var INVOKE_FAILED = {
+  UNABLE_TO_LOCK_DOOR_OPEN: 'Door open',
+  CAR_IN_SLEEP_MODE: 'Car asleep',
+  VEHICLE_IN_SLEEP: 'Car asleep',
+  REJECTED: 'Rejected by car',
+  TIMEOUT: "Car didn't answer",
+  CAR_TIMEOUT: "Car didn't answer",
+  DELIVERY_TIMEOUT: "Car didn't answer",
+  CONNECTION_FAILURE: 'Car offline',
+  NOT_SUPPORTED: 'Not supported',
+  NOT_ALLOWED_PRIVACY_ENABLED: 'Privacy mode on',
+  NOT_ALLOWED_WRONG_USAGE_MODE: 'Not allowed now',
+  CAR_ERROR: 'Car error',
+  INVOCATION_SPECIFIC_ERROR: 'Car error',
+  UNLOCK_TIME_FRAME_PASSED: 'Expired',
+  EXPIRED: 'Expired'
+};
 
 function isCommandAvailable(command) {
   var stored = get(STORE.AVAILABLE_COMMANDS);
@@ -770,6 +895,7 @@ function callApi(command, isRetry) {
   }
 
   var url = VOLVO_API + '/vehicles/' + get(STORE.VIN) + '/commands/' + apiPath;
+  var sentAt = Date.now();
   console.log('API: POST ' + url + ' body: ' + body);
 
   var req = new XMLHttpRequest();
@@ -781,9 +907,19 @@ function callApi(command, isRetry) {
   req.onload = function () {
     console.log('API ' + req.status + ': ' + req.responseText);
     if (req.status >= 200 && req.status < 300) {
+      var invoke = '';
+      try {
+        invoke = field(JSON.parse(req.responseText), 'invokeStatus') || '';
+      } catch (e) {}
+      var failed = INVOKE_FAILED[invoke];
+      if (failed) {
+        sendResult(failed, false);
+        fetchCarStatus();
+        return;
+      }
       var msg = (COMMANDS[apiPath] && COMMANDS[apiPath].success) || 'Done';
       sendResult(msg, true);
-      fetchCarStatus();
+      expectAfterCommand(apiPath, sentAt);
     } else if (req.status === 401 && !isRetry) {
       refreshToken(function (ok) {
         if (ok) callApi(command, true);
